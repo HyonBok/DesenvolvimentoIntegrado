@@ -1,0 +1,8 @@
+client/*.o
+server/*.o
+client/recon_client
+client/recon_client.exe
+server/recon_server
+server/recon_server.exe
+build/
+server/output
