@@ -1,1 +1,44 @@
-Dados
+Dados/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# C/C++ build outputs
+*.o
+*.obj
+*.exe
+*.dll
+*.lib
+*.a
+*.so
+*.dylib
+
+# CMake and generated build directories
+build/
+build-*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+Testing/
+
+# Visual Studio / VS Code local files
+.vs/
+.vscode/
+*.suo
+*.user
+*.VC.db
+*.VC.opendb
+
+# Project generated outputs
+Projeto-Cpp/**/output/
+Projeto-Cpp/output/
+output/
+
+# Local scratch files
+.codex-*/
