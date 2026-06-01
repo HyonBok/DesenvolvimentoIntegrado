@@ -24,6 +24,8 @@ using socket_t = int;
 
 namespace {
 
+// Garante que a biblioteca de sockets seja inicializada no Windows e liberada
+// automaticamente ao fim do programa. Em Linux/macOS nao ha inicializacao extra.
 struct SocketRuntime {
     SocketRuntime() {
 #ifdef _WIN32
@@ -39,6 +41,7 @@ struct SocketRuntime {
     }
 };
 
+// Fecha o socket usando a chamada correta para cada sistema operacional.
 void closeSocket(socket_t sock) {
 #ifdef _WIN32
     closesocket(sock);
@@ -47,6 +50,7 @@ void closeSocket(socket_t sock) {
 #endif
 }
 
+// Cria um vetor com valores aleatorios de distribuicao normal.
 std::vector<double> randVector(int n, std::mt19937_64& rng) {
     std::normal_distribution<double> normal(0.0, 1.0);
     std::vector<double> values(n);
@@ -56,6 +60,7 @@ std::vector<double> randVector(int n, std::mt19937_64& rng) {
     return values;
 }
 
+// Cria a matriz quadrada H usada no problema de reconstrucao.
 std::vector<std::vector<double>> randMatrixSquare(int n, std::mt19937_64& rng) {
     std::normal_distribution<double> normal(0.0, 1.0);
     std::vector<std::vector<double>> matrix(n, std::vector<double>(n));
@@ -67,6 +72,7 @@ std::vector<std::vector<double>> randMatrixSquare(int n, std::mt19937_64& rng) {
     return matrix;
 }
 
+// Aplica o ganho esperado ao vetor g antes de envia-lo ao servidor.
 void applyGain(std::vector<double>& g) {
     for (std::size_t l = 0; l < g.size(); ++l) {
         const double ll = static_cast<double>(l + 1);
@@ -79,6 +85,7 @@ void appendNumber(std::ostringstream& out, double value) {
     out << std::setprecision(17) << value;
 }
 
+// Monta manualmente o JSON enviado ao endpoint /reconstruct.
 std::string buildPayloadJson(const std::vector<double>& g,
                              const std::vector<std::vector<double>>& h,
                              int imageSize,
@@ -114,6 +121,8 @@ std::string buildPayloadJson(const std::vector<double>& g,
     return out.str();
 }
 
+// Envia todos os bytes da requisicao, pois send() pode transmitir apenas parte
+// do buffer em uma chamada.
 bool sendAll(socket_t sock, const std::string& data) {
     std::size_t total = 0;
     while (total < data.size()) {
@@ -126,6 +135,8 @@ bool sendAll(socket_t sock, const std::string& data) {
     return true;
 }
 
+// Abre uma conexao TCP, envia uma requisicao HTTP POST com JSON e retorna
+// apenas o corpo da resposta.
 std::string postJson(const std::string& host, int port, const std::string& path, const std::string& body) {
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
@@ -192,6 +203,8 @@ int main() {
     try {
         SocketRuntime sockets;
 
+        // O cliente gera uma instancia aleatoria do problema e registra a seed
+        // para permitir reproduzir o mesmo payload depois.
         const int m = 2048;
         const auto now = std::chrono::high_resolution_clock::now().time_since_epoch();
         const auto seed = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
@@ -201,6 +214,7 @@ int main() {
         applyGain(g);
         const auto h = randMatrixSquare(m, rng);
 
+        // Envia os dados para o servidor local e imprime a resposta JSON.
         const std::string payload = buildPayloadJson(g, h, m, seed);
         const std::string reply = postJson("localhost", 8080, "/reconstruct", payload);
         std::cout << "Server reply: " << reply << '\n';

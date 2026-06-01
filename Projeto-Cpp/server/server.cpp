@@ -33,6 +33,7 @@ using socket_t = int;
 
 namespace {
 
+// Estrutura que representa o JSON recebido do cliente.
 struct RequestPayload {
     Vector g;
     Matrix h;
@@ -41,6 +42,7 @@ struct RequestPayload {
     std::int64_t seed = 0;
 };
 
+// Metadados de uma execucao de reconstrucao, usados no JSON de resposta e no CSV.
 struct ReconMeta {
     std::string algorithm;
     std::string method;
@@ -55,6 +57,7 @@ struct ReconMeta {
     std::string imagePath;
 };
 
+// Inicializa e finaliza a API de sockets quando o programa roda no Windows.
 struct SocketRuntime {
     SocketRuntime() {
 #ifdef _WIN32
@@ -70,6 +73,7 @@ struct SocketRuntime {
     }
 };
 
+// Fecha conexoes de forma portavel entre Windows e sistemas Unix.
 void closeSocket(socket_t sock) {
 #ifdef _WIN32
     closesocket(sock);
@@ -78,11 +82,13 @@ void closeSocket(socket_t sock) {
 #endif
 }
 
+// Retorna o tempo atual em milissegundos para calcular duracao das execucoes.
 std::int64_t nowMs() {
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     return std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
 }
 
+// Retorna o instante atual em UTC no formato ISO-8601.
 std::string isoNow() {
     const auto now = std::chrono::system_clock::now();
     const std::time_t time = std::chrono::system_clock::to_time_t(now);
@@ -97,12 +103,14 @@ std::string isoNow() {
     return out.str();
 }
 
+// Garante que a pasta de saida exista antes de gravar imagens e relatorios.
 std::string ensureOutputDir() {
     const std::string out = "output";
     std::filesystem::create_directories(out);
     return out;
 }
 
+// Escapa caracteres especiais antes de inserir strings em JSON.
 std::string jsonEscape(const std::string& text) {
     std::ostringstream out;
     for (const char ch : text) {
@@ -130,10 +138,12 @@ std::string jsonEscape(const std::string& text) {
     return out.str();
 }
 
+// Parser JSON simples, suficiente para o formato gerado pelo cliente.
 class PayloadParser {
 public:
     explicit PayloadParser(const std::string& input) : input_(input) {}
 
+    // Lê os campos conhecidos do payload e ignora campos extras.
     RequestPayload parse() {
         RequestPayload req;
         consume('{');
@@ -173,12 +183,14 @@ private:
     const std::string& input_;
     std::size_t pos_ = 0;
 
+    // Avanca por espacos, tabs e quebras de linha entre tokens JSON.
     void skipWhitespace() {
         while (pos_ < input_.size() && std::isspace(static_cast<unsigned char>(input_[pos_]))) {
             ++pos_;
         }
     }
 
+    // Tenta consumir um caractere esperado sem gerar erro se ele nao existir.
     bool tryConsume(char expected) {
         skipWhitespace();
         if (pos_ < input_.size() && input_[pos_] == expected) {
@@ -188,12 +200,14 @@ private:
         return false;
     }
 
+    // Consome um caractere obrigatorio e falha se o JSON estiver fora do formato.
     void consume(char expected) {
         if (!tryConsume(expected)) {
             throw std::runtime_error(std::string("JSON invalido: esperado '") + expected + "'");
         }
     }
 
+    // Lê strings JSON, incluindo os escapes mais comuns.
     std::string parseString() {
         consume('"');
         std::string text;
@@ -245,6 +259,7 @@ private:
         throw std::runtime_error("string JSON sem fechamento");
     }
 
+    // Converte o proximo token numerico para double.
     double parseNumber() {
         skipWhitespace();
         const char* begin = input_.c_str() + pos_;
@@ -257,6 +272,7 @@ private:
         return number;
     }
 
+    // Lê arrays numericos, usados principalmente para o vetor g.
     Vector parseNumberArray() {
         Vector values;
         consume('[');
@@ -273,6 +289,7 @@ private:
         return values;
     }
 
+    // Lê matrizes representadas como arrays de arrays numericos.
     Matrix parseMatrix() {
         Matrix matrix;
         consume('[');
@@ -289,6 +306,7 @@ private:
         return matrix;
     }
 
+    // Lê o objeto params com parametros numericos dos algoritmos.
     std::map<std::string, double> parseParams() {
         std::map<std::string, double> params;
         consume('{');
@@ -307,6 +325,7 @@ private:
         return params;
     }
 
+    // Ignora campos desconhecidos mantendo o parser alinhado no proximo token.
     void skipValue() {
         skipWhitespace();
         if (pos_ >= input_.size()) {
@@ -369,6 +388,7 @@ RequestPayload parsePayload(const std::string& body) {
     return PayloadParser(body).parse();
 }
 
+// Serializa os metadados de uma execucao para JSON.
 std::string metaToJson(const ReconMeta& meta) {
     std::ostringstream out;
     out << '{'
@@ -387,6 +407,7 @@ std::string metaToJson(const ReconMeta& meta) {
     return out.str();
 }
 
+// Serializa todas as execucoes em um array JSON para responder ao cliente.
 std::string metasToJson(const std::vector<ReconMeta>& metas) {
     std::ostringstream out;
     out << '[';
@@ -405,6 +426,8 @@ void saveJson(const std::string& path, const ReconMeta& meta) {
     out << metaToJson(meta) << '\n';
 }
 
+// Executa um dos metodos em C++, salva a imagem reconstruida e devolve os
+// metadados da execucao.
 ReconMeta runCpp(const RequestPayload& req, const std::string& method) {
     const std::string outDir = ensureOutputDir();
     const std::string startIso = isoNow();
@@ -440,6 +463,7 @@ ReconMeta runCpp(const RequestPayload& req, const std::string& method) {
     return meta;
 }
 
+// Acrescenta uma linha por execucao no relatorio comparativo em CSV.
 void appendCsv(const std::string& path, const std::vector<ReconMeta>& metas) {
     const bool newFile = !std::filesystem::exists(path);
     std::ofstream out(path, std::ios::app);
@@ -471,6 +495,8 @@ void appendCsv(const std::string& path, const std::vector<ReconMeta>& metas) {
     }
 }
 
+// Fluxo principal do endpoint: parseia o corpo, roda CGNE e CGNR, grava o CSV
+// e devolve os metadados como JSON.
 std::string reconstruct(const std::string& body) {
     const RequestPayload req = parsePayload(body);
     std::vector<ReconMeta> results;
@@ -486,6 +512,7 @@ std::string lower(std::string text) {
     return text;
 }
 
+// Lê uma requisicao HTTP simples e separa headers e body respeitando Content-Length.
 std::pair<std::string, std::string> splitHeadersAndBody(socket_t client) {
     std::string request;
     char buffer[8192];
@@ -536,6 +563,7 @@ std::pair<std::string, std::string> splitHeadersAndBody(socket_t client) {
     return {headers, body};
 }
 
+// Envia uma resposta HTTP completa para o cliente.
 void sendResponse(socket_t client, int status, const std::string& statusText, const std::string& contentType, const std::string& body) {
     std::ostringstream response;
     response << "HTTP/1.1 " << status << ' ' << statusText << "\r\n"
@@ -554,6 +582,7 @@ void sendResponse(socket_t client, int status, const std::string& statusText, co
     }
 }
 
+// Atende uma conexao: valida rota/metodo, executa a reconstrucao e responde.
 void handleClient(socket_t client) {
     try {
         const auto [headers, body] = splitHeadersAndBody(client);
@@ -581,11 +610,13 @@ int main() {
     try {
         SocketRuntime sockets;
 
+        // Cria o socket TCP que ficara escutando requisicoes HTTP na porta 8080.
         socket_t server = socket(AF_INET, SOCK_STREAM, 0);
         if (server == static_cast<socket_t>(-1)) {
             throw std::runtime_error("nao foi possivel criar socket");
         }
 
+        // Permite reiniciar o servidor sem aguardar a porta sair do estado TIME_WAIT.
         int yes = 1;
         setsockopt(server, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes), sizeof(yes));
 
@@ -605,6 +636,7 @@ int main() {
         }
 
         std::cout << "Server listening on :8080\n";
+        // Loop sequencial: aceita uma conexao, processa a requisicao e fecha o cliente.
         while (true) {
             sockaddr_in clientAddress{};
 #ifdef _WIN32
