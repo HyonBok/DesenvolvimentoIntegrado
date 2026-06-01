@@ -103,7 +103,8 @@ void printUsage(int iteration, double elapsedSeconds) {
 
 ReconResult CGNR_Cpp(const Matrix& h, const Vector& g, const std::map<std::string, double>& params) {
     const std::size_t m = h.size();
-    Vector f(m, 0.0);
+    const std::size_t n = h.empty() ? 0 : h[0].size();
+    Vector f(n, 0.0);
     const Matrix ht = transpose(h);
     Vector r = g;
     Vector z = matVec(ht, r);
@@ -131,14 +132,16 @@ ReconResult CGNR_Cpp(const Matrix& h, const Vector& g, const std::map<std::strin
         }
 
         const double alpha = numer / denom;
-        for (std::size_t j = 0; j < m; ++j) {
+        for (std::size_t j = 0; j < n; ++j) {
             f[j] += alpha * p[j];
+        }
+        for (std::size_t j = 0; j < m; ++j) {
             r[j] -= alpha * wi[j];
         }
 
         Vector zNext = matVec(ht, r);
         const double beta = numer == 0.0 ? 0.0 : norm2sq(zNext) / numer;
-        for (std::size_t j = 0; j < m; ++j) {
+        for (std::size_t j = 0; j < n; ++j) {
             p[j] = zNext[j] + beta * p[j];
         }
 
@@ -157,7 +160,8 @@ ReconResult CGNR_Cpp(const Matrix& h, const Vector& g, const std::map<std::strin
 
 ReconResult CGNE_Cpp(const Matrix& h, const Vector& g, const std::map<std::string, double>& params) {
     const std::size_t m = h.size();
-    Vector f(m, 0.0);
+    const std::size_t n = h.empty() ? 0 : h[0].size();
+    Vector f(n, 0.0);
     Vector r = g;
     const Matrix ht = transpose(h);
     Vector p = matVec(ht, r);
@@ -183,7 +187,7 @@ ReconResult CGNE_Cpp(const Matrix& h, const Vector& g, const std::map<std::strin
         }
 
         const double alpha = rTr / pTp;
-        for (std::size_t j = 0; j < m; ++j) {
+        for (std::size_t j = 0; j < n; ++j) {
             f[j] += alpha * p[j];
         }
 
@@ -195,7 +199,7 @@ ReconResult CGNE_Cpp(const Matrix& h, const Vector& g, const std::map<std::strin
         const double rTrNew = dot(r, r);
         const double beta = rTr == 0.0 ? 0.0 : rTrNew / rTr;
         const Vector htR = matVec(ht, r);
-        for (std::size_t j = 0; j < m; ++j) {
+        for (std::size_t j = 0; j < n; ++j) {
             p[j] = htR[j] + beta * p[j];
         }
 

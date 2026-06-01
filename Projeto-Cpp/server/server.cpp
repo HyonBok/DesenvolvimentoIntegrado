@@ -6,11 +6,13 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstdint>
+#include <cstdio>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -22,6 +24,8 @@
 #define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
+#include <psapi.h>
 using socket_t = SOCKET;
 #else
 #include <arpa/inet.h>
@@ -51,6 +55,8 @@ struct ReconMeta {
     std::int64_t startMs = 0;
     std::int64_t endMs = 0;
     std::int64_t elapsedMs = 0;
+    double cpuSeconds = 0.0;
+    double memoryMb = 0.0;
     int sizePixels = 0;
     int iterations = 0;
     double finalResNorm = 0.0;
@@ -108,6 +114,28 @@ std::string ensureOutputDir() {
     const std::string out = "output";
     std::filesystem::create_directories(out);
     return out;
+}
+
+double processMemoryMb() {
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS counters{};
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters))) {
+        return static_cast<double>(counters.WorkingSetSize) / 1024.0 / 1024.0;
+    }
+    return 0.0;
+#else
+    std::ifstream status("/proc/self/status");
+    std::string label;
+    while (status >> label) {
+        if (label == "VmRSS:") {
+            double kb = 0.0;
+            status >> kb;
+            return kb / 1024.0;
+        }
+        status.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    }
+    return 0.0;
+#endif
 }
 
 // Escapa caracteres especiais antes de inserir strings em JSON.
@@ -399,6 +427,8 @@ std::string metaToJson(const ReconMeta& meta) {
         << "\"start_ms\":" << meta.startMs << ','
         << "\"end_ms\":" << meta.endMs << ','
         << "\"elapsed_ms\":" << meta.elapsedMs << ','
+        << "\"cpu_seconds\":" << std::setprecision(17) << meta.cpuSeconds << ','
+        << "\"memory_mb\":" << std::setprecision(17) << meta.memoryMb << ','
         << "\"size_pixels\":" << meta.sizePixels << ','
         << "\"iterations\":" << meta.iterations << ','
         << "\"final_res_norm\":" << std::setprecision(17) << meta.finalResNorm << ','
@@ -432,11 +462,13 @@ ReconMeta runCpp(const RequestPayload& req, const std::string& method) {
     const std::string outDir = ensureOutputDir();
     const std::string startIso = isoNow();
     const std::int64_t startMs = nowMs();
+    const std::clock_t cpuStart = std::clock();
 
     const ReconResult result = method == "CGNR"
                                    ? CGNR_Cpp(req.h, req.g, req.params)
                                    : CGNE_Cpp(req.h, req.g, req.params);
 
+    const double cpuSeconds = static_cast<double>(std::clock() - cpuStart) / CLOCKS_PER_SEC;
     const std::int64_t endMs = nowMs();
     const std::string endIso = isoNow();
     const auto stamp = std::chrono::high_resolution_clock::now().time_since_epoch();
@@ -455,6 +487,8 @@ ReconMeta runCpp(const RequestPayload& req, const std::string& method) {
     meta.startMs = startMs;
     meta.endMs = endMs;
     meta.elapsedMs = endMs - startMs;
+    meta.cpuSeconds = cpuSeconds;
+    meta.memoryMb = processMemoryMb();
     meta.sizePixels = req.imageSize;
     meta.iterations = result.iterations;
     meta.finalResNorm = result.finalResNorm;
@@ -473,7 +507,7 @@ void appendCsv(const std::string& path, const std::vector<ReconMeta>& metas) {
     }
 
     if (newFile) {
-        out << "timestamp,algorithm,method,start_iso,end_iso,start_ms,end_ms,elapsed_ms,"
+        out << "timestamp,algorithm,method,start_iso,end_iso,start_ms,end_ms,elapsed_ms,cpu_seconds,memory_mb,"
                "size_pixels,iterations,final_res_norm,image_path\n";
     }
 
@@ -488,6 +522,8 @@ void appendCsv(const std::string& path, const std::vector<ReconMeta>& metas) {
             << meta.startMs << ','
             << meta.endMs << ','
             << meta.elapsedMs << ','
+            << std::setprecision(17) << meta.cpuSeconds << ','
+            << std::setprecision(17) << meta.memoryMb << ','
             << meta.sizePixels << ','
             << meta.iterations << ','
             << std::setprecision(17) << meta.finalResNorm << ','
@@ -495,15 +531,179 @@ void appendCsv(const std::string& path, const std::vector<ReconMeta>& metas) {
     }
 }
 
+void validatePayload(const RequestPayload& req) {
+    if (req.h.empty() || req.h[0].empty()) {
+        throw std::runtime_error("payload sem matriz H");
+    }
+    const std::size_t columns = req.h[0].size();
+    for (const Vector& row : req.h) {
+        if (row.size() != columns) {
+            throw std::runtime_error("matriz H com linhas de tamanhos diferentes");
+        }
+    }
+    if (req.g.size() != req.h.size()) {
+        throw std::runtime_error("dimensoes invalidas: g deve ter o mesmo numero de valores que as linhas de H");
+    }
+    if (req.imageSize <= 0) {
+        throw std::runtime_error("image_size invalido");
+    }
+}
+
+std::filesystem::path findFromParents(const std::filesystem::path& relative) {
+    std::filesystem::path base = std::filesystem::current_path();
+    while (true) {
+        const std::filesystem::path candidate = base / relative;
+        if (std::filesystem::exists(candidate)) {
+            return candidate;
+        }
+        if (!base.has_parent_path() || base == base.parent_path()) {
+            break;
+        }
+        base = base.parent_path();
+    }
+    throw std::runtime_error("arquivo nao encontrado: " + relative.string());
+}
+
+std::string quoteArg(const std::filesystem::path& path) {
+    std::string text = std::filesystem::absolute(path).string();
+    std::string quoted = "\"";
+    for (const char ch : text) {
+        if (ch == '"') {
+            quoted += "\\\"";
+        } else {
+            quoted += ch;
+        }
+    }
+    quoted += '"';
+    return quoted;
+}
+
+std::string quoteTextArg(const std::string& text) {
+    std::string quoted = "\"";
+    for (const char ch : text) {
+        if (ch == '"') {
+            quoted += "\\\"";
+        } else {
+            quoted += ch;
+        }
+    }
+    quoted += '"';
+    return quoted;
+}
+
+std::string readTextFile(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    if (!in) {
+        throw std::runtime_error("nao foi possivel ler arquivo: " + path.string());
+    }
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    return buffer.str();
+}
+
+std::vector<std::string> pythonInterpreters() {
+    std::vector<std::string> interpreters;
+    if (const char* envPython = std::getenv("PYTHON")) {
+        if (*envPython != '\0') {
+            interpreters.push_back(quoteTextArg(envPython));
+        }
+    }
+    interpreters.push_back("python");
+#ifdef _WIN32
+    interpreters.push_back("py -3");
+#else
+    interpreters.push_back("python3");
+#endif
+    return interpreters;
+}
+
+std::string runPython(const std::string& body, const std::string& outDir, const std::string& csvPath) {
+    try {
+        const std::filesystem::path script = findFromParents("Projeto-Python/Projeto.py");
+        const auto stamp = std::chrono::high_resolution_clock::now().time_since_epoch();
+        const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stamp).count();
+        const std::filesystem::path requestPath = std::filesystem::path(outDir) / ("request_" + std::to_string(ns) + ".json");
+        const std::filesystem::path resultPath = std::filesystem::path(outDir) / ("python_result_" + std::to_string(ns) + ".json");
+
+        {
+            std::ofstream request(requestPath);
+            request << body;
+        }
+
+        const std::string arguments = " " + quoteArg(script)
+            + " --input " + quoteArg(requestPath)
+            + " --output-dir " + quoteArg(outDir)
+            + " --append-csv " + quoteArg(csvPath)
+            + " > " + quoteArg(resultPath);
+
+        int status = 1;
+        for (const std::string& interpreter : pythonInterpreters()) {
+            const std::string command = interpreter + arguments;
+            status = std::system(command.c_str());
+            if (status == 0) {
+                break;
+            }
+            std::cerr << "python command failed: " << interpreter << " status " << status << '\n';
+        }
+        if (status != 0) {
+            std::cerr << "python reconstruction failed; install Python/NumPy or set PYTHON\n";
+            std::filesystem::remove(requestPath);
+            std::filesystem::remove(resultPath);
+            return {};
+        }
+
+        std::string result = readTextFile(resultPath);
+        std::filesystem::remove(requestPath);
+        std::filesystem::remove(resultPath);
+        return result;
+    } catch (const std::exception& err) {
+        std::cerr << "python reconstruction unavailable: " << err.what() << '\n';
+        return {};
+    }
+}
+
+std::string trimJsonArray(std::string text) {
+    text.erase(text.begin(), std::find_if(text.begin(), text.end(), [](unsigned char ch) {
+                   return !std::isspace(ch);
+               }));
+    text.erase(std::find_if(text.rbegin(), text.rend(), [](unsigned char ch) {
+                   return !std::isspace(ch);
+               }).base(),
+               text.end());
+    if (text.size() >= 2 && text.front() == '[' && text.back() == ']') {
+        return text.substr(1, text.size() - 2);
+    }
+    return {};
+}
+
+std::string mergeJsonArrays(const std::string& first, const std::string& second) {
+    const std::string firstItems = trimJsonArray(first);
+    const std::string secondItems = trimJsonArray(second);
+    if (firstItems.empty()) {
+        return secondItems.empty() ? "[]" : "[" + secondItems + "]";
+    }
+    if (secondItems.empty()) {
+        return "[" + firstItems + "]";
+    }
+    return "[" + firstItems + "," + secondItems + "]";
+}
+
 // Fluxo principal do endpoint: parseia o corpo, roda CGNE e CGNR, grava o CSV
 // e devolve os metadados como JSON.
 std::string reconstruct(const std::string& body) {
     const RequestPayload req = parsePayload(body);
+    validatePayload(req);
+
+    const std::string outDir = ensureOutputDir();
+    const std::string csvPath = outDir + "/report_comparison.csv";
     std::vector<ReconMeta> results;
     results.push_back(runCpp(req, "CGNE"));
     results.push_back(runCpp(req, "CGNR"));
-    appendCsv(ensureOutputDir() + "/report_comparison.csv", results);
-    return metasToJson(results);
+    appendCsv(csvPath, results);
+
+    const std::string cppJson = metasToJson(results);
+    const std::string pythonJson = runPython(body, outDir, csvPath);
+    return mergeJsonArrays(cppJson, pythonJson);
 }
 
 std::string lower(std::string text) {

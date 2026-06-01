@@ -1,12 +1,15 @@
 #include <chrono>
-#include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -50,34 +53,99 @@ void closeSocket(socket_t sock) {
 #endif
 }
 
-// Cria um vetor com valores aleatorios de distribuicao normal.
-std::vector<double> randVector(int n, std::mt19937_64& rng) {
-    std::normal_distribution<double> normal(0.0, 1.0);
-    std::vector<double> values(n);
-    for (double& value : values) {
-        value = normal(rng);
+using Matrix = std::vector<std::vector<double>>;
+using Vector = std::vector<double>;
+
+struct SignalFile {
+    std::string relative;
+    std::filesystem::path path;
+};
+
+std::vector<double> parseCsvNumbers(const std::string& line) {
+    std::vector<double> values;
+    std::string normalized = line;
+    for (char& ch : normalized) {
+        if (ch == ';') {
+            ch = ',';
+        }
+    }
+
+    std::stringstream row(normalized);
+    std::string cell;
+    while (std::getline(row, cell, ',')) {
+        if (cell.empty()) {
+            continue;
+        }
+        values.push_back(std::stod(cell));
     }
     return values;
 }
 
-// Cria a matriz quadrada H usada no problema de reconstrucao.
-std::vector<std::vector<double>> randMatrixSquare(int n, std::mt19937_64& rng) {
-    std::normal_distribution<double> normal(0.0, 1.0);
-    std::vector<std::vector<double>> matrix(n, std::vector<double>(n));
-    for (auto& row : matrix) {
-        for (double& value : row) {
-            value = normal(rng);
+// Procura arquivos de dados partindo do diretorio atual e subindo ate a raiz
+// do projeto. Isso permite executar o binario pela pasta client, server ou build.
+std::filesystem::path findFromParents(const std::filesystem::path& relative) {
+    std::filesystem::path base = std::filesystem::current_path();
+    while (true) {
+        const std::filesystem::path candidate = base / relative;
+        if (std::filesystem::exists(candidate)) {
+            return candidate;
         }
+        if (!base.has_parent_path() || base == base.parent_path()) {
+            break;
+        }
+        base = base.parent_path();
+    }
+    throw std::runtime_error("arquivo nao encontrado: " + relative.string());
+}
+
+Vector readVectorCsv(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    if (!in) {
+        throw std::runtime_error("nao foi possivel abrir vetor: " + path.string());
+    }
+
+    Vector values;
+    std::string line;
+    while (std::getline(in, line)) {
+        const Vector row = parseCsvNumbers(line);
+        values.insert(values.end(), row.begin(), row.end());
+    }
+    return values;
+}
+
+Matrix readMatrixCsv(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    if (!in) {
+        throw std::runtime_error("nao foi possivel abrir matriz: " + path.string());
+    }
+
+    Matrix matrix;
+    std::string line;
+    std::size_t columns = 0;
+    while (std::getline(in, line)) {
+        Vector row = parseCsvNumbers(line);
+        if (row.empty()) {
+            continue;
+        }
+        if (columns == 0) {
+            columns = row.size();
+        } else if (row.size() != columns) {
+            throw std::runtime_error("matriz com quantidade inconsistente de colunas: " + path.string());
+        }
+        matrix.push_back(std::move(row));
     }
     return matrix;
 }
 
-// Aplica o ganho esperado ao vetor g antes de envia-lo ao servidor.
-void applyGain(std::vector<double>& g) {
-    for (std::size_t l = 0; l < g.size(); ++l) {
-        const double ll = static_cast<double>(l + 1);
-        const double gamma = 100.0 + (1.0 / 20.0) * ll * std::sqrt(ll);
-        g[l] *= gamma;
+void validateDimensions(const Vector& g, const Matrix& h, const std::filesystem::path& gPath) {
+    if (h.empty() || h[0].empty()) {
+        throw std::runtime_error("matriz H vazia");
+    }
+    if (g.size() != h.size()) {
+        std::ostringstream err;
+        err << "dimensoes incompativeis para " << gPath.string()
+            << ": g tem " << g.size() << " valores, mas H tem " << h.size() << " linhas";
+        throw std::runtime_error(err.str());
     }
 }
 
@@ -85,11 +153,40 @@ void appendNumber(std::ostringstream& out, double value) {
     out << std::setprecision(17) << value;
 }
 
+std::string jsonEscape(const std::string& text) {
+    std::ostringstream out;
+    for (const char ch : text) {
+        switch (ch) {
+        case '"':
+            out << "\\\"";
+            break;
+        case '\\':
+            out << "\\\\";
+            break;
+        case '\n':
+            out << "\\n";
+            break;
+        case '\r':
+            out << "\\r";
+            break;
+        case '\t':
+            out << "\\t";
+            break;
+        default:
+            out << ch;
+            break;
+        }
+    }
+    return out.str();
+}
+
 // Monta manualmente o JSON enviado ao endpoint /reconstruct.
-std::string buildPayloadJson(const std::vector<double>& g,
-                             const std::vector<std::vector<double>>& h,
+std::string buildPayloadJson(const Vector& g,
+                             const Matrix& h,
                              int imageSize,
-                             std::int64_t seed) {
+                             std::int64_t seed,
+                             const std::string& signalPath,
+                             const std::string& matrixPath) {
     std::ostringstream out;
     out << "{\"g\":[";
     for (std::size_t i = 0; i < g.size(); ++i) {
@@ -117,7 +214,9 @@ std::string buildPayloadJson(const std::vector<double>& g,
     out << "],\"params\":{\"max_iter\":10,\"tol\":0.0001},"
         << "\"image_size\":" << imageSize << ','
         << "\"seed\":" << seed << ','
-        << "\"meta\":{\"note\":\"Payload generated by C++ client; same g is used by every implementation\"}}";
+        << "\"meta\":{\"note\":\"Payload generated by C++ client from sample CSV data\","
+        << "\"signal_path\":\"" << jsonEscape(signalPath) << "\","
+        << "\"matrix_path\":\"" << jsonEscape(matrixPath) << "\"}}";
     return out.str();
 }
 
@@ -203,21 +302,47 @@ int main() {
     try {
         SocketRuntime sockets;
 
-        // O cliente gera uma instancia aleatoria do problema e registra a seed
-        // para permitir reproduzir o mesmo payload depois.
-        const int m = 2048;
+        const std::string hRelative = "Dados/Dados Modelo 2/H-2.csv/H-2.csv";
+        const auto hPath = findFromParents(hRelative);
+        const std::vector<SignalFile> signalFiles = {
+            {"Dados/Dados Modelo 2/g-30x30-1.csv", findFromParents("Dados/Dados Modelo 2/g-30x30-1.csv")},
+            {"Dados/Dados Modelo 2/g-30x30-2.csv", findFromParents("Dados/Dados Modelo 2/g-30x30-2.csv")},
+        };
+
+        std::cout << "Carregando H de " << hPath.string() << '\n';
+        const Matrix h = readMatrixCsv(hPath);
+        const int imageSize = static_cast<int>(h[0].size());
+
+        // A seed controla apenas os intervalos entre os sinais enviados.
         const auto now = std::chrono::high_resolution_clock::now().time_since_epoch();
         const auto seed = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
         std::mt19937_64 rng(static_cast<std::uint64_t>(seed));
+        std::uniform_int_distribution<int> delayMs(250, 1000);
 
-        auto g = randVector(m, rng);
-        applyGain(g);
-        const auto h = randMatrixSquare(m, rng);
+        const std::string sequenceFile = "signal_sequence_" + std::to_string(seed) + ".txt";
+        std::ofstream sequence(sequenceFile);
+        sequence << "seed=" << seed << '\n';
+        sequence << "matrix=" << hPath.string() << '\n';
 
-        // Envia os dados para o servidor local e imprime a resposta JSON.
-        const std::string payload = buildPayloadJson(g, h, m, seed);
-        const std::string reply = postJson("localhost", 8080, "/reconstruct", payload);
-        std::cout << "Server reply: " << reply << '\n';
+        for (std::size_t i = 0; i < signalFiles.size(); ++i) {
+            const auto& signal = signalFiles[i];
+            const auto& gPath = signal.path;
+            std::cout << "Carregando sinal " << gPath.string() << '\n';
+            const Vector g = readVectorCsv(gPath);
+            validateDimensions(g, h, gPath);
+
+            const int waitMs = i == 0 ? 0 : delayMs(rng);
+            if (waitMs > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
+            }
+
+            sequence << "signal=" << gPath.string() << ",delay_ms=" << waitMs << '\n';
+            const std::string payload = buildPayloadJson(g, h, imageSize, seed, signal.relative, hRelative);
+            const std::string reply = postJson("localhost", 8080, "/reconstruct", payload);
+            std::cout << "Server reply for " << gPath.filename().string() << ": " << reply << '\n';
+        }
+
+        std::cout << "Sequencia registrada em " << sequenceFile << '\n';
     } catch (const std::exception& err) {
         std::cerr << "Erro ao enviar ao servidor: " << err.what() << '\n';
         return 1;
