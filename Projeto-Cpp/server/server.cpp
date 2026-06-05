@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <cstdint>
 #include <cstdio>
@@ -21,7 +22,9 @@
 #include <vector>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -43,6 +46,8 @@ struct RequestPayload {
     Matrix h;
     std::map<std::string, double> params;
     int imageSize = 0;
+    int imageWidth = 0;
+    int imageHeight = 0;
     std::int64_t seed = 0;
 };
 
@@ -58,6 +63,8 @@ struct ReconMeta {
     double cpuSeconds = 0.0;
     double memoryMb = 0.0;
     int sizePixels = 0;
+    int imageWidth = 0;
+    int imageHeight = 0;
     int iterations = 0;
     double finalResNorm = 0.0;
     std::string imagePath;
@@ -191,6 +198,10 @@ public:
                 req.params = parseParams();
             } else if (key == "image_size") {
                 req.imageSize = static_cast<int>(parseNumber());
+            } else if (key == "image_width") {
+                req.imageWidth = static_cast<int>(parseNumber());
+            } else if (key == "image_height") {
+                req.imageHeight = static_cast<int>(parseNumber());
             } else if (key == "seed") {
                 req.seed = static_cast<std::int64_t>(parseNumber());
             } else {
@@ -430,6 +441,8 @@ std::string metaToJson(const ReconMeta& meta) {
         << "\"cpu_seconds\":" << std::setprecision(17) << meta.cpuSeconds << ','
         << "\"memory_mb\":" << std::setprecision(17) << meta.memoryMb << ','
         << "\"size_pixels\":" << meta.sizePixels << ','
+        << "\"image_width\":" << meta.imageWidth << ','
+        << "\"image_height\":" << meta.imageHeight << ','
         << "\"iterations\":" << meta.iterations << ','
         << "\"final_res_norm\":" << std::setprecision(17) << meta.finalResNorm << ','
         << "\"image_path\":\"" << jsonEscape(meta.imagePath) << "\""
@@ -456,6 +469,26 @@ void saveJson(const std::string& path, const ReconMeta& meta) {
     out << metaToJson(meta) << '\n';
 }
 
+ImageMatrix toImageMatrix(const Vector& values, int width, int height) {
+    if (width <= 0 || height <= 0) {
+        const int side = static_cast<int>(std::sqrt(static_cast<double>(values.size())));
+        if (side * side == static_cast<int>(values.size())) {
+            width = side;
+            height = side;
+        } else {
+            width = static_cast<int>(values.size());
+            height = 1;
+        }
+    }
+
+    ImageMatrix matrix(static_cast<std::size_t>(height), Vector(static_cast<std::size_t>(width), 0.0));
+    const std::size_t count = std::min(values.size(), static_cast<std::size_t>(width * height));
+    for (std::size_t i = 0; i < count; ++i) {
+        matrix[i / static_cast<std::size_t>(width)][i % static_cast<std::size_t>(width)] = values[i];
+    }
+    return matrix;
+}
+
 // Executa um dos metodos em C++, salva a imagem reconstruida e devolve os
 // metadados da execucao.
 ReconMeta runCpp(const RequestPayload& req, const std::string& method) {
@@ -475,7 +508,7 @@ ReconMeta runCpp(const RequestPayload& req, const std::string& method) {
     const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stamp).count();
     const std::string imagePath = outDir + "/img_cpp_" + method + "_" + std::to_string(ns) + ".png";
 
-    if (!saveImageFromVector(result.f, imagePath, req.imageSize)) {
+    if (!saveImageFromMatrix(toImageMatrix(result.f, req.imageWidth, req.imageHeight), imagePath)) {
         std::cerr << "erro salvar imagem C++: " << imagePath << '\n';
     }
 
@@ -490,6 +523,8 @@ ReconMeta runCpp(const RequestPayload& req, const std::string& method) {
     meta.cpuSeconds = cpuSeconds;
     meta.memoryMb = processMemoryMb();
     meta.sizePixels = req.imageSize;
+    meta.imageWidth = req.imageWidth;
+    meta.imageHeight = req.imageHeight;
     meta.iterations = result.iterations;
     meta.finalResNorm = result.finalResNorm;
     meta.imagePath = imagePath;
@@ -508,6 +543,7 @@ void appendCsv(const std::string& path, const std::vector<ReconMeta>& metas) {
 
     if (newFile) {
         out << "timestamp,algorithm,method,start_iso,end_iso,start_ms,end_ms,elapsed_ms,cpu_seconds,memory_mb,"
+               "image_width,image_height,"
                "size_pixels,iterations,final_res_norm,image_path\n";
     }
 
@@ -524,6 +560,8 @@ void appendCsv(const std::string& path, const std::vector<ReconMeta>& metas) {
             << meta.elapsedMs << ','
             << std::setprecision(17) << meta.cpuSeconds << ','
             << std::setprecision(17) << meta.memoryMb << ','
+            << meta.imageWidth << ','
+            << meta.imageHeight << ','
             << meta.sizePixels << ','
             << meta.iterations << ','
             << std::setprecision(17) << meta.finalResNorm << ','
@@ -546,6 +584,12 @@ void validatePayload(const RequestPayload& req) {
     }
     if (req.imageSize <= 0) {
         throw std::runtime_error("image_size invalido");
+    }
+    if (req.imageWidth <= 0 || req.imageHeight <= 0) {
+        throw std::runtime_error("image_width e image_height devem ser positivos");
+    }
+    if (req.imageWidth * req.imageHeight != req.imageSize) {
+        throw std::runtime_error("image_width * image_height deve ser igual a image_size");
     }
 }
 
@@ -688,6 +732,30 @@ std::string mergeJsonArrays(const std::string& first, const std::string& second)
     return "[" + firstItems + "," + secondItems + "]";
 }
 
+void appendComparisonReport(const std::string& path,
+                            const RequestPayload& req,
+                            const std::vector<ReconMeta>& cppResults,
+                            const std::string& pythonJson) {
+    std::ofstream out(path, std::ios::app);
+    if (!out) {
+        return;
+    }
+
+    out << "Seed: " << req.seed << '\n'
+        << "Imagem: " << req.imageWidth << "x" << req.imageHeight << '\n'
+        << "Resultados C++:\n";
+    for (const ReconMeta& meta : cppResults) {
+        out << "- " << meta.method
+            << " | tempo_ms=" << meta.elapsedMs
+            << " | cpu_s=" << std::setprecision(6) << meta.cpuSeconds
+            << " | memoria_mb=" << std::setprecision(6) << meta.memoryMb
+            << " | iteracoes=" << meta.iterations
+            << " | residuo=" << std::setprecision(12) << meta.finalResNorm
+            << " | imagem=" << meta.imagePath << '\n';
+    }
+    out << "Resultados Python: " << (pythonJson.empty() ? "nao executado" : pythonJson) << "\n\n";
+}
+
 // Fluxo principal do endpoint: parseia o corpo, roda CGNE e CGNR, grava o CSV
 // e devolve os metadados como JSON.
 std::string reconstruct(const std::string& body) {
@@ -703,6 +771,7 @@ std::string reconstruct(const std::string& body) {
 
     const std::string cppJson = metasToJson(results);
     const std::string pythonJson = runPython(body, outDir, csvPath);
+    appendComparisonReport(outDir + "/report_comparison.txt", req, results, pythonJson);
     return mergeJsonArrays(cppJson, pythonJson);
 }
 

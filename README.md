@@ -1,20 +1,28 @@
-# Desenvolvimento Integrado - Reconstrucao de Imagens
+# Projeto para Desenvolvimento Integrado de Sistemas
 
-Este repositorio contem prototipos em Python e C++ para reconstrucao de imagens usando metodos de gradiente conjugado sobre equacoes normais. A especificacao pede uma linguagem interpretada e nao fortemente tipada, Python, e uma linguagem compilada e fortemente tipada, C++.
+Projeto de reconstrucao de imagens usando CGNE e CGNR em duas linguagens:
 
-O fluxo atual recebe sinais `g`, usa uma matriz de modelo `H` vinda da pasta `Dados` e reconstrui uma imagem `f` usando CGNE e CGNR. O servidor compara a execucao em C++ e em Python com o mesmo payload.
+- C++: linguagem compilada e fortemente tipada.
+- Python: linguagem interpretada e nao fortemente tipada.
 
-## Estrutura do Repositorio
+O projeto usa os dados de exemplo da pasta `Dados`, principalmente o Modelo 2 (`30x30`). Os clientes C++ e Python usam o mesmo arquivo base `Dados/base_config.txt`, que guarda a seed, a matriz `H`, a sequencia de sinais `g`, os intervalos entre envios e os parametros dos algoritmos.
+
+Se `Dados/base_config.txt` nao existir, o cliente C++ ou o cliente Python cria automaticamente um arquivo base com os dados do Modelo 2.
+
+## Estrutura
 
 ```text
 .
 |-- Dados/
+|   |-- base_config.txt
 |   |-- Dados Modelo 1/
 |   `-- Dados Modelo 2/
 |-- Projeto-Python/
+|   |-- Main.py
+|   |-- Server.py
+|   |-- Client.py
 |   `-- Projeto.py
 `-- Projeto-Cpp/
-    |-- CMakeLists.txt
     |-- client/
     |   |-- client.cpp
     |   `-- Makefile
@@ -27,23 +35,22 @@ O fluxo atual recebe sinais `g`, usa uma matriz de modelo `H` vinda da pasta `Da
         `-- Makefile
 ```
 
-## Estado Atual
+## Arquivo Base
 
-O projeto em Python implementa `CGNE` e `CGNR`, recebe o mesmo JSON usado pelo servidor, gera imagens PNG, grava metadados JSON e anexa suas medicoes ao CSV comparativo.
+Exemplo de `Dados/base_config.txt`:
 
-O projeto em C++ possui:
+```text
+seed=1780691941587657800
+matrix=Dados/Dados Modelo 2/H-2.csv/H-2.csv
+image_width=30
+image_height=30
+max_iter=10
+tol=0.0001
+signal=Dados/Dados Modelo 2/g-30x30-1.csv,delay_ms=0
+signal=Dados/Dados Modelo 2/g-30x30-2.csv,delay_ms=307
+```
 
-- servidor HTTP simples na porta `8080`;
-- endpoint `POST /reconstruct`;
-- implementacoes de `CGNE_Cpp` e `CGNR_Cpp`;
-- cliente que carrega `H` e sinais `g` da pasta `Dados`;
-- envio de uma sequencia de sinais em intervalos aleatorios;
-- geracao de imagens PNG em escala de cinza;
-- metadados em JSON por imagem;
-- relatorio comparativo em CSV para C++ e Python;
-- medicao de tempo decorrido, tempo de CPU, memoria, iteracoes e residuo final.
-
-O servidor C++ aciona a implementacao Python por subprocesso para comparar a versao compilada com a versao interpretada usando exatamente os mesmos dados. Se o executavel `python` nao estiver no `PATH`, defina a variavel de ambiente `PYTHON` com o caminho do interpretador. No Windows, o servidor tambem tenta usar `py -3` como alternativa.
+Esse arquivo garante que os fluxos C++ e Python usem a mesma seed, a mesma matriz `H` e a mesma sequencia de sinais.
 
 ## Requisitos
 
@@ -52,123 +59,89 @@ O servidor C++ aciona a implementacao Python por subprocesso para comparar a ver
 - Python 3.10 ou superior
 - NumPy
 
-Instalacao do NumPy, se necessario:
-
 ```bash
 pip install numpy
 ```
 
 ### C++
 
-- Compilador C++ com suporte a C++17
-- CMake 3.16 ou superior, ou `make`/`mingw32-make`
-- Windows: bibliotecas `ws2_32` e `psapi`, ja configuradas no CMake e nos Makefiles
-- Linux/macOS: sockets POSIX padrao
+- Compilador C++17
+- Windows: `ws2_32` e `psapi`
+- Linux/macOS: sockets POSIX
 
-## Como Executar o Projeto Python
+## Executar Python
 
-Na raiz do repositorio:
+O arquivo principal do Python agora e `Main.py`. O arquivo `Projeto.py` apenas chama `Main.py` para manter compatibilidade.
 
-```bash
-python Projeto-Python/Projeto.py
-```
-
-Resposta esperada no modo demonstracao:
-
-```text
-Solution: [ 2. -2.]
-Iterations: 3
-Final residual: 4.559679095398286e-16
-```
-
-Para executar o Python com o mesmo JSON recebido pelo servidor:
+Processar um JSON diretamente:
 
 ```bash
-python Projeto-Python/Projeto.py --input payload.json --output-dir output --append-csv output/report_comparison.csv
+python Projeto-Python/Main.py --input payload.json --output-dir output_python
 ```
 
-## Como Compilar o Projeto C++
-
-### Usando CMake
+Servidor Python:
 
 ```bash
-cd Projeto-Cpp
-cmake -S . -B build-local
-cmake --build build-local
+python Projeto-Python/Main.py --server --port 8081 --output-dir output_python
 ```
 
-Se o CMake nao escolher um gerador automaticamente, use Ninja:
+Cliente Python, em outro terminal:
 
 ```bash
-cd Projeto-Cpp
-cmake -S . -B build-local -G Ninja
-cmake --build build-local
+python Projeto-Python/Main.py --client --port 8081
 ```
 
-Dependendo do gerador do CMake, os executaveis ficam diretamente em `build-local/` ou em uma subpasta de configuracao, como `build-local/Debug/` ou `build-local/Release/`.
+O servidor Python atende `POST /reconstruct`, executa CGNE e CGNR em Python, gera imagens, metadados e relatorio.
 
-## Como Executar o Fluxo Cliente-Servidor
+## Executar C++
 
-1. Inicie o servidor em um terminal:
+Compile o servidor:
 
 ```bash
 cd Projeto-Cpp/server
-make run
+make build
 ```
 
-Ou execute o binario gerado pelo CMake:
-
-```bash
-cd Projeto-Cpp
-./build-local/recon_server
-```
-
-No Windows, o comando pode ser:
-
-```powershell
-cd Projeto-Cpp
-.\build-local\Debug\recon_server.exe
-```
-
-2. Em outro terminal, execute o cliente:
+Compile o cliente:
 
 ```bash
 cd Projeto-Cpp/client
-make run
+make build
 ```
 
-Ou execute o binario gerado pelo CMake:
+Inicie o servidor C++:
 
 ```bash
-cd Projeto-Cpp
-./build-local/recon_client
+cd Projeto-Cpp/server
+./recon_server
 ```
 
-No Windows, o comando pode ser:
+No Windows:
 
 ```powershell
-cd Projeto-Cpp
-.\build-local\Debug\recon_client.exe
+cd Projeto-Cpp\server
+.\recon_server.exe
 ```
 
-O cliente usa por padrao os dados do Modelo 2:
+Execute o cliente C++ em outro terminal:
 
-- `Dados/Dados Modelo 2/H-2.csv/H-2.csv`
-- `Dados/Dados Modelo 2/g-30x30-1.csv`
-- `Dados/Dados Modelo 2/g-30x30-2.csv`
-
-Ele envia os sinais em sequencia, com intervalo aleatorio entre as requisicoes, e registra a ordem em `signal_sequence_<seed>.txt`.
-
-## Entrada Esperada pelo Servidor
-
-O servidor espera uma requisicao HTTP:
-
-```http
-POST /reconstruct
-Content-Type: application/json
+```bash
+cd Projeto-Cpp/client
+./recon_client
 ```
 
-Com corpo JSON neste formato:
+No Windows:
+
+```powershell
+cd Projeto-Cpp\client
+.\recon_client.exe
+```
+
+O servidor C++ executa CGNE e CGNR em C++. Ele tambem tenta chamar o Python por subprocesso para gerar os resultados Python no mesmo relatorio. Se `python` nao estiver no `PATH`, defina a variavel `PYTHON` apontando para o interpretador com NumPy.
+
+## Entrada HTTP
+
+Formato esperado:
 
 ```json
 {
@@ -182,79 +155,37 @@ Com corpo JSON neste formato:
     "max_iter": 10,
     "tol": 0.0001
   },
-  "image_size": 2,
+  "image_size": 4,
+  "image_width": 2,
+  "image_height": 2,
   "seed": 123456
 }
 ```
 
-Campos:
+Nos dados do Modelo 2, `H` e retangular (`27904 x 900`) e a imagem reconstruida e `30 x 30`.
 
-- `g`: vetor de sinal.
-- `H`: matriz de modelo. Ela pode ser retangular; no Modelo 2, `H` tem `27904 x 900`.
-- `params.max_iter`: limite de iteracoes. A especificacao pede ate 10 iteracoes.
-- `params.tol`: tolerancia de parada. A especificacao pede erro menor que `1e-4`.
-- `image_size`: quantidade de pixels usada para salvar a imagem reconstruida. No Modelo 2, o valor e `900`, gerando uma imagem `30 x 30`.
-- `seed`: semente usada pelo cliente para rastreabilidade dos intervalos aleatorios.
+## Saidas
 
-## Resposta Esperada do Servidor
+Cada servidor gera uma pasta de saida no diretorio em que foi executado.
 
-O servidor retorna um JSON com um item para cada algoritmo executado. Em uma requisicao normal, sao retornados quatro itens: `CGNE` e `CGNR` em C++, mais `CGNE` e `CGNR` em Python.
+Arquivos principais:
 
-Exemplo de item:
+- `img_cpp_CGNE_*.png` e `img_cpp_CGNR_*.png`: imagens C++.
+- `img_python_CGNE_*.png` e `img_python_CGNR_*.png`: imagens Python.
+- `*.png.json`: metadados de cada imagem.
+- `report_comparison.csv`: relatorio em CSV com tempo, CPU, memoria, iteracoes, residuo e caminho da imagem.
+- `report_comparison.txt`: relatorio textual simples para comparar os resultados.
 
-```json
-{
-  "algorithm": "cpp",
-  "method": "CGNE",
-  "start_iso": "2026-05-30T12:00:00Z",
-  "end_iso": "2026-05-30T12:00:01Z",
-  "start_ms": 1780000000000,
-  "end_ms": 1780000000100,
-  "elapsed_ms": 100,
-  "cpu_seconds": 0.08,
-  "memory_mb": 180.5,
-  "size_pixels": 900,
-  "iterations": 10,
-  "final_res_norm": 123.45,
-  "image_path": "output/img_cpp_CGNE_1780000000000000000.png"
-}
-```
-
-## Arquivos Gerados
-
-Ao processar uma requisicao, o servidor cria a pasta `output/` dentro do diretorio em que ele foi executado.
-
-Arquivos esperados:
-
-- `output/img_cpp_CGNE_*.png`: imagem reconstruida pelo CGNE em C++.
-- `output/img_cpp_CGNE_*.png.json`: metadados da imagem C++ CGNE.
-- `output/img_cpp_CGNR_*.png`: imagem reconstruida pelo CGNR em C++.
-- `output/img_cpp_CGNR_*.png.json`: metadados da imagem C++ CGNR.
-- `output/img_python_CGNE_*.png`: imagem reconstruida pelo CGNE em Python.
-- `output/img_python_CGNE_*.png.json`: metadados da imagem Python CGNE.
-- `output/img_python_CGNR_*.png`: imagem reconstruida pelo CGNR em Python.
-- `output/img_python_CGNR_*.png.json`: metadados da imagem Python CGNR.
-- `output/report_comparison.csv`: relatorio comparativo com tempo, CPU, memoria, iteracoes, residuo final e caminho das imagens.
-
-## Parametros Citados na Especificacao
-
-O PDF tambem define calculos auxiliares:
-
-- Fator de reducao: `C = ||H^T * H||_2`
-- Coeficiente de regularizacao: `lambda = max(abs(H^T * g)) * 0.10`
-- Erro: `epsilon = ||r_{i+1}||_2 - ||r_i||_2`
-- Ganho de sinal: `gamma_l = 100 + (1 / 20) * l * sqrt(l)`
-
-No codigo atual, os sinais `g` sao carregados diretamente dos arquivos de exemplo da pasta `Dados`. Os calculos de `C` e `lambda` ainda aparecem como requisito teorico, mas nao foram incorporados aos algoritmos porque nao sao necessarios para executar CGNE/CGNR com os dados fornecidos.
+As imagens C++ agora sao montadas como matriz (`image_height x image_width`) antes de serem codificadas em PNG.
 
 ## Criterios de Parada
 
-Pela especificacao, o servidor deve executar ate que:
+Os algoritmos param quando:
 
-- o erro seja menor que `1e-4`; ou
-- o numero de iteracoes chegue a `10`.
+- a variacao do residuo fica abaixo de `tol`; ou
+- o numero de iteracoes chega a `max_iter`.
 
-No C++ e no Python, `max_iter` e `tol` sao recebidos em `params`. O cliente atual envia:
+No arquivo base padrao:
 
 ```json
 {
@@ -263,15 +194,8 @@ No C++ e no Python, `max_iter` e `tol` sao recebidos em `params`. O cliente atua
 }
 ```
 
-## Pendencias
+## Pendencias Restantes
 
-- Avaliar se os parametros `C` e `lambda` dos adendos precisam entrar na formulacao final ou apenas na documentacao teorica.
-- Melhorar o controle de saturacao se o servidor passar a atender requisicoes em paralelo. Hoje o controle pratico e simples: servidor sequencial e cliente com intervalos aleatorios entre sinais.
-- Opcional: permitir escolher Modelo 1 ou Modelo 2 por argumento de linha de comando no cliente.
-
-## Observacoes para a Equipe
-
-- O `.txt` da sequencia aleatoria e gerado pelo cliente como `signal_sequence_<seed>.txt`.
-- O servidor compara C++ contra Python usando o mesmo `g`, a mesma `H` e os mesmos parametros.
-- O cliente nao gera mais uma matriz `H` quadrada aleatoria de `2048 x 2048`; ele usa os dados de exemplo do Modelo 2.
-- Para imagens mais interpretaveis, mantenha `image_size` igual ao numero de colunas de `H` quando esse numero for um quadrado perfeito. No Modelo 2, `900 = 30 x 30`.
+- Avaliar se os parametros teoricos `C` e `lambda` precisam entrar na formulacao final.
+- Melhorar o controle de saturacao se o servidor passar a atender varias requisicoes em paralelo.
+- Opcional: permitir escolher Modelo 1 ou Modelo 2 por argumento de linha de comando.

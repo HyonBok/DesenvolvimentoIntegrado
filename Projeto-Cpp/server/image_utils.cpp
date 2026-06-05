@@ -103,6 +103,56 @@ std::vector<unsigned char> encodePngGray(const std::vector<unsigned char>& pixel
 
 } // namespace
 
+bool saveImageFromMatrix(const ImageMatrix& matrix, const std::string& path) {
+    if (matrix.empty() || matrix[0].empty()) {
+        return false;
+    }
+
+    const int height = static_cast<int>(matrix.size());
+    const int width = static_cast<int>(matrix[0].size());
+    for (const auto& row : matrix) {
+        if (static_cast<int>(row.size()) != width) {
+            return false;
+        }
+    }
+
+    auto minMax = std::minmax_element(matrix[0].begin(), matrix[0].end());
+    double minValue = *minMax.first;
+    double maxValue = *minMax.second;
+    for (const auto& row : matrix) {
+        const auto rowMinMax = std::minmax_element(row.begin(), row.end());
+        minValue = std::min(minValue, *rowMinMax.first);
+        maxValue = std::max(maxValue, *rowMinMax.second);
+    }
+    if (minValue == maxValue) {
+        maxValue = minValue + 1.0;
+    }
+
+    std::vector<unsigned char> pixels(static_cast<std::size_t>(width * height), 0);
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const double norm = (matrix[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)] - minValue)
+                                / (maxValue - minValue);
+            const std::size_t index = static_cast<std::size_t>(y * width + x);
+            if (norm <= 0.0) {
+                pixels[index] = 0;
+            } else if (norm >= 1.0) {
+                pixels[index] = 255;
+            } else {
+                pixels[index] = static_cast<unsigned char>(norm * 255.0);
+            }
+        }
+    }
+
+    const std::vector<unsigned char> png = encodePngGray(pixels, width, height);
+    std::ofstream out(path, std::ios::binary);
+    if (!out) {
+        return false;
+    }
+    out.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+    return static_cast<bool>(out);
+}
+
 bool saveImageFromVector(const std::vector<double>& values, const std::string& path, int sizePixels) {
     if (values.empty() || sizePixels <= 0) {
         return false;
@@ -115,31 +165,10 @@ bool saveImageFromVector(const std::vector<double>& values, const std::string& p
         height = 1;
     }
 
-    std::vector<unsigned char> pixels(static_cast<std::size_t>(width * height), 0);
-    const auto [minIt, maxIt] = std::minmax_element(values.begin(), values.end());
-    double minValue = *minIt;
-    double maxValue = *maxIt;
-    if (minValue == maxValue) {
-        minValue = maxValue - 1.0;
-    }
-
-    const std::size_t count = std::min<std::size_t>(pixels.size(), values.size());
+    ImageMatrix matrix(static_cast<std::size_t>(height), std::vector<double>(static_cast<std::size_t>(width), 0.0));
+    const std::size_t count = std::min<std::size_t>(static_cast<std::size_t>(width * height), values.size());
     for (std::size_t i = 0; i < count; ++i) {
-        const double norm = (values[i] - minValue) / (maxValue - minValue);
-        if (norm <= 0.0) {
-            pixels[i] = 0;
-        } else if (norm >= 1.0) {
-            pixels[i] = 255;
-        } else {
-            pixels[i] = static_cast<unsigned char>(norm * 255.0);
-        }
+        matrix[i / static_cast<std::size_t>(width)][i % static_cast<std::size_t>(width)] = values[i];
     }
-
-    const std::vector<unsigned char> png = encodePngGray(pixels, width, height);
-    std::ofstream out(path, std::ios::binary);
-    if (!out) {
-        return false;
-    }
-    out.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
-    return static_cast<bool>(out);
+    return saveImageFromMatrix(matrix, path);
 }

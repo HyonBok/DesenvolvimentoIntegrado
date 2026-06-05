@@ -13,7 +13,9 @@
 #include <vector>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 using socket_t = SOCKET;
@@ -59,6 +61,17 @@ using Vector = std::vector<double>;
 struct SignalFile {
     std::string relative;
     std::filesystem::path path;
+    int delayMs = 0;
+};
+
+struct BaseConfig {
+    std::int64_t seed = 0;
+    std::string matrixRelative;
+    int imageWidth = 30;
+    int imageHeight = 30;
+    int maxIter = 10;
+    double tol = 0.0001;
+    std::vector<SignalFile> signals;
 };
 
 std::vector<double> parseCsvNumbers(const std::string& line) {
@@ -96,6 +109,103 @@ std::filesystem::path findFromParents(const std::filesystem::path& relative) {
         base = base.parent_path();
     }
     throw std::runtime_error("arquivo nao encontrado: " + relative.string());
+}
+
+std::string trim(const std::string& text) {
+    const auto begin = text.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return {};
+    }
+    const auto end = text.find_last_not_of(" \t\r\n");
+    return text.substr(begin, end - begin + 1);
+}
+
+std::filesystem::path baseConfigPath() {
+    return findFromParents("Dados") / "base_config.txt";
+}
+
+void createBaseConfig(const std::filesystem::path& path) {
+    const auto now = std::chrono::high_resolution_clock::now().time_since_epoch();
+    const auto seed = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+    std::mt19937_64 rng(static_cast<std::uint64_t>(seed));
+    std::uniform_int_distribution<int> delayMs(250, 1000);
+
+    std::ofstream out(path);
+    if (!out) {
+        throw std::runtime_error("nao foi possivel criar arquivo base: " + path.string());
+    }
+
+    out << "seed=" << seed << '\n'
+        << "matrix=Dados/Dados Modelo 2/H-2.csv/H-2.csv\n"
+        << "image_width=30\n"
+        << "image_height=30\n"
+        << "max_iter=10\n"
+        << "tol=0.0001\n"
+        << "signal=Dados/Dados Modelo 2/g-30x30-1.csv,delay_ms=0\n"
+        << "signal=Dados/Dados Modelo 2/g-30x30-2.csv,delay_ms=" << delayMs(rng) << '\n';
+}
+
+SignalFile parseSignalLine(const std::string& value) {
+    SignalFile signal;
+    const std::size_t comma = value.find(',');
+    signal.relative = trim(comma == std::string::npos ? value : value.substr(0, comma));
+    if (comma != std::string::npos) {
+        const std::string rest = value.substr(comma + 1);
+        const std::string prefix = "delay_ms=";
+        const std::size_t delay = rest.find(prefix);
+        if (delay != std::string::npos) {
+            signal.delayMs = std::stoi(trim(rest.substr(delay + prefix.size())));
+        }
+    }
+    signal.path = findFromParents(signal.relative);
+    return signal;
+}
+
+BaseConfig loadBaseConfig() {
+    const std::filesystem::path path = baseConfigPath();
+    if (!std::filesystem::exists(path)) {
+        createBaseConfig(path);
+    }
+
+    std::ifstream in(path);
+    if (!in) {
+        throw std::runtime_error("nao foi possivel abrir arquivo base: " + path.string());
+    }
+
+    BaseConfig config;
+    std::string line;
+    while (std::getline(in, line)) {
+        line = trim(line);
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        const std::size_t eq = line.find('=');
+        if (eq == std::string::npos) {
+            continue;
+        }
+        const std::string key = trim(line.substr(0, eq));
+        const std::string value = trim(line.substr(eq + 1));
+        if (key == "seed") {
+            config.seed = std::stoll(value);
+        } else if (key == "matrix") {
+            config.matrixRelative = value;
+        } else if (key == "image_width") {
+            config.imageWidth = std::stoi(value);
+        } else if (key == "image_height") {
+            config.imageHeight = std::stoi(value);
+        } else if (key == "max_iter") {
+            config.maxIter = std::stoi(value);
+        } else if (key == "tol") {
+            config.tol = std::stod(value);
+        } else if (key == "signal") {
+            config.signals.push_back(parseSignalLine(value));
+        }
+    }
+
+    if (config.seed == 0 || config.matrixRelative.empty() || config.signals.empty()) {
+        throw std::runtime_error("arquivo base incompleto: " + path.string());
+    }
+    return config;
 }
 
 Vector readVectorCsv(const std::filesystem::path& path) {
@@ -183,8 +293,7 @@ std::string jsonEscape(const std::string& text) {
 // Monta manualmente o JSON enviado ao endpoint /reconstruct.
 std::string buildPayloadJson(const Vector& g,
                              const Matrix& h,
-                             int imageSize,
-                             std::int64_t seed,
+                             const BaseConfig& config,
                              const std::string& signalPath,
                              const std::string& matrixPath) {
     std::ostringstream out;
@@ -211,9 +320,13 @@ std::string buildPayloadJson(const Vector& g,
         out << ']';
     }
 
-    out << "],\"params\":{\"max_iter\":10,\"tol\":0.0001},"
-        << "\"image_size\":" << imageSize << ','
-        << "\"seed\":" << seed << ','
+    out << "],\"params\":{\"max_iter\":" << config.maxIter << ",\"tol\":";
+    appendNumber(out, config.tol);
+    out << "},"
+        << "\"image_size\":" << config.imageWidth * config.imageHeight << ','
+        << "\"image_width\":" << config.imageWidth << ','
+        << "\"image_height\":" << config.imageHeight << ','
+        << "\"seed\":" << config.seed << ','
         << "\"meta\":{\"note\":\"Payload generated by C++ client from sample CSV data\","
         << "\"signal_path\":\"" << jsonEscape(signalPath) << "\","
         << "\"matrix_path\":\"" << jsonEscape(matrixPath) << "\"}}";
@@ -302,47 +415,30 @@ int main() {
     try {
         SocketRuntime sockets;
 
-        const std::string hRelative = "Dados/Dados Modelo 2/H-2.csv/H-2.csv";
-        const auto hPath = findFromParents(hRelative);
-        const std::vector<SignalFile> signalFiles = {
-            {"Dados/Dados Modelo 2/g-30x30-1.csv", findFromParents("Dados/Dados Modelo 2/g-30x30-1.csv")},
-            {"Dados/Dados Modelo 2/g-30x30-2.csv", findFromParents("Dados/Dados Modelo 2/g-30x30-2.csv")},
-        };
+        const BaseConfig config = loadBaseConfig();
+        const auto hPath = findFromParents(config.matrixRelative);
 
         std::cout << "Carregando H de " << hPath.string() << '\n';
         const Matrix h = readMatrixCsv(hPath);
-        const int imageSize = static_cast<int>(h[0].size());
 
-        // A seed controla apenas os intervalos entre os sinais enviados.
-        const auto now = std::chrono::high_resolution_clock::now().time_since_epoch();
-        const auto seed = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
-        std::mt19937_64 rng(static_cast<std::uint64_t>(seed));
-        std::uniform_int_distribution<int> delayMs(250, 1000);
+        std::cout << "Usando arquivo base " << baseConfigPath().string() << '\n';
+        std::cout << "Seed compartilhada: " << config.seed << '\n';
 
-        const std::string sequenceFile = "signal_sequence_" + std::to_string(seed) + ".txt";
-        std::ofstream sequence(sequenceFile);
-        sequence << "seed=" << seed << '\n';
-        sequence << "matrix=" << hPath.string() << '\n';
-
-        for (std::size_t i = 0; i < signalFiles.size(); ++i) {
-            const auto& signal = signalFiles[i];
+        for (std::size_t i = 0; i < config.signals.size(); ++i) {
+            const auto& signal = config.signals[i];
             const auto& gPath = signal.path;
             std::cout << "Carregando sinal " << gPath.string() << '\n';
             const Vector g = readVectorCsv(gPath);
             validateDimensions(g, h, gPath);
 
-            const int waitMs = i == 0 ? 0 : delayMs(rng);
-            if (waitMs > 0) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
+            if (signal.delayMs > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(signal.delayMs));
             }
 
-            sequence << "signal=" << gPath.string() << ",delay_ms=" << waitMs << '\n';
-            const std::string payload = buildPayloadJson(g, h, imageSize, seed, signal.relative, hRelative);
+            const std::string payload = buildPayloadJson(g, h, config, signal.relative, config.matrixRelative);
             const std::string reply = postJson("localhost", 8080, "/reconstruct", payload);
             std::cout << "Server reply for " << gPath.filename().string() << ": " << reply << '\n';
         }
-
-        std::cout << "Sequencia registrada em " << sequenceFile << '\n';
     } catch (const std::exception& err) {
         std::cerr << "Erro ao enviar ao servidor: " << err.what() << '\n';
         return 1;
