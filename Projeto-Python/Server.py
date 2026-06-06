@@ -153,7 +153,11 @@ def save_image(values, path, width, height):
     count = min(len(flat), len(values))
     flat[:count] = values[:count]
 
-    min_value = float(np.min(matrix))
+    # Valor absoluto e transposta da matriz
+    matrix = np.abs(matrix).T
+    height, width = matrix.shape
+
+    min_value = 0.0
     max_value = float(np.max(matrix))
     if min_value == max_value:
         max_value = min_value + 1.0

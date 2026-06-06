@@ -75,62 +75,34 @@ O arquivo principal do Python e `Main.py`.
 Servidor Python:
 
 ```bash
-python Projeto-Python/Main.py --server --port 8081 --output-dir output_python
+python Projeto-Python/Main.py --server
 ```
 
 Cliente Python, em outro terminal:
 
 ```bash
-python Projeto-Python/Main.py --client --port 8081
+python Projeto-Python/Main.py --client
 ```
 
 O servidor Python atende `POST /reconstruct`, executa CGNE e CGNR em Python, gera imagens, metadados e relatorio.
 
 ## Executar C++
 
-Compile o servidor:
+Compile e execute servidor:
 
 ```bash
 cd Projeto-Cpp/server
-make build
+make run build
 ```
 
-Compile o cliente:
+Compile e execute o cliente:
 
 ```bash
 cd Projeto-Cpp/client
-make build
+make run build
 ```
 
-Inicie o servidor C++:
-
-```bash
-cd Projeto-Cpp/server
-./recon_server
-```
-
-No Windows:
-
-```powershell
-cd Projeto-Cpp\server
-.\recon_server.exe
-```
-
-Execute o cliente C++ em outro terminal:
-
-```bash
-cd Projeto-Cpp/client
-./recon_client
-```
-
-No Windows:
-
-```powershell
-cd Projeto-Cpp\client
-.\recon_client.exe
-```
-
-O servidor C++ executa CGNE e CGNR em C++. Para comparar com Python, rode tambem o fluxo servidor/cliente Python, que usa o mesmo `Dados/base_config.txt`.
+O servidor C++ executa CGNE e CGNR em C++.
 
 ## Entrada HTTP
 
@@ -169,8 +141,6 @@ Arquivos principais:
 - `report_comparison.csv`: relatorio em CSV com tempo, CPU, memoria, iteracoes, residuo e caminho da imagem.
 - `report_comparison.txt`: relatorio textual simples para comparar os resultados.
 
-As imagens C++ agora sao montadas como matriz (`image_height x image_width`) antes de serem codificadas em PNG.
-
 ## Criterios de Parada
 
 Os algoritmos param quando:
@@ -186,9 +156,3 @@ No arquivo base padrao:
   "tol": 0.0001
 }
 ```
-
-## Pendencias Restantes
-
-- Avaliar se os parametros teoricos `C` e `lambda` precisam entrar na formulacao final.
-- Melhorar o controle de saturacao se o servidor passar a atender varias requisicoes em paralelo.
-- Opcional: permitir escolher Modelo 1 ou Modelo 2 por argumento de linha de comando.
