@@ -11,14 +11,15 @@ def main():
     parser.add_argument("--output-dir", default="output", help="pasta de saida")
     parser.add_argument("--host", default="localhost", help="host do servidor")
     parser.add_argument("--port", type=int, default=8081, help="porta do servidor")
+    parser.add_argument("--model", default="2", help="modelo de dados usado pelo cliente: 1 ou 2")
     args = parser.parse_args()
 
     if args.server:
         run_server(args.host, args.port, args.output_dir)
     elif args.client:
-        run_client(args.host, args.port)
+        run_client(args.host, args.port, args.model)
     else:
-        print("Use --server ou --client.")
+        print("Use --server ou --client. Use --model para escolher o modelo.")
 
 
 if __name__ == "__main__":

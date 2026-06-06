@@ -1,0 +1,9 @@
+seed=1780691941587657801
+matrix=Dados/Dados Modelo 1/H-1.csv/H-1.csv
+image_width=60
+image_height=60
+max_iter=10
+tol=0.0001
+signal=Dados/Dados Modelo 1/G-1.csv,delay_ms=0
+signal=Dados/Dados Modelo 1/G-2.csv,delay_ms=300
+signal=Dados/Dados Modelo 1/A-60x60-1.csv,delay_ms=600

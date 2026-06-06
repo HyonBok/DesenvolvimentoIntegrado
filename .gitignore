@@ -1,4 +1,9 @@
-Dados/
+Dados/**
+!Dados/
+!Dados/Dados Modelo 1/
+!Dados/Dados Modelo 1/base_config.txt
+!Dados/Dados Modelo 2/
+!Dados/Dados Modelo 2/base_config.txt
 
 # Python
 __pycache__/

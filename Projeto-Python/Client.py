@@ -5,11 +5,35 @@ import time
 import urllib.request
 
 
-DEFAULT_MATRIX = "Dados/Dados Modelo 2/H-2.csv/H-2.csv"
-DEFAULT_SIGNALS = [
-    "Dados/Dados Modelo 2/g-30x30-1.csv",
-    "Dados/Dados Modelo 2/g-30x30-2.csv",
-]
+DEFAULT_MODELS = {
+    "1": {
+        "name": "Dados Modelo 1",
+        "matrix": "Dados/Dados Modelo 1/H-1.csv/H-1.csv",
+        "image_width": 60,
+        "image_height": 60,
+        "signals": [
+            "Dados/Dados Modelo 1/G-1.csv",
+            "Dados/Dados Modelo 1/G-2.csv",
+            "Dados/Dados Modelo 1/A-60x60-1.csv",
+        ],
+    },
+    "2": {
+        "name": "Dados Modelo 2",
+        "matrix": "Dados/Dados Modelo 2/H-2.csv/H-2.csv",
+        "image_width": 30,
+        "image_height": 30,
+        "signals": [
+            "Dados/Dados Modelo 2/g-30x30-1.csv",
+            "Dados/Dados Modelo 2/g-30x30-2.csv",
+            "Dados/Dados Modelo 2/A-30x30-1.csv",
+        ],
+    },
+}
+
+MODEL_ALIASES = {
+    "1": "1",
+    "2": "2",
+}
 
 
 # Função auxiliar, para encontrar os caminhos dos arquivos
@@ -28,35 +52,48 @@ def find_from_parents(relative):
     raise FileNotFoundError(f"arquivo nao encontrado: {relative}")
 
 
-# Caminho da pasta Dados
-def base_config_path():
-    return os.path.join(find_from_parents("Dados"), "base_config.txt")
+def normalize_model(model):
+    value = str(model).strip().lower().replace("_", "-").replace(" ", "")
+    if value not in MODEL_ALIASES:
+        raise ValueError("modelo invalido. Use 1 ou 2.")
+    return MODEL_ALIASES[value]
+
+
+# Caminho do arquivo base_config.txt do modelo escolhido
+def base_config_path(model="2"):
+    model = normalize_model(model)
+    model_dir = find_from_parents(os.path.join("Dados", DEFAULT_MODELS[model]["name"]))
+    return os.path.join(model_dir, "base_config.txt")
 
 
 # Cria o arquivo base_config.txt com configurações padrão caso não exista
-def create_base_config(path):
+def create_base_config(path, model="2"):
+    defaults = DEFAULT_MODELS[normalize_model(model)]
     seed = time.time_ns()
     rng = random.Random(seed)
 
     with open(path, "w", encoding="utf-8") as output:
         output.write(f"seed={seed}\n")
-        output.write(f"matrix={DEFAULT_MATRIX}\n")
-        output.write("image_width=30\n")
-        output.write("image_height=30\n")
+        output.write(f"matrix={defaults['matrix']}\n")
+        output.write(f"image_width={defaults['image_width']}\n")
+        output.write(f"image_height={defaults['image_height']}\n")
         output.write("max_iter=10\n")
         output.write("tol=0.0001\n")
-        output.write(f"signal={DEFAULT_SIGNALS[0]},delay_ms=0\n")
-        output.write(f"signal={DEFAULT_SIGNALS[1]},delay_ms={rng.randint(250, 1000)}\n")
+        for index, signal in enumerate(defaults["signals"]):
+            delay_ms = 0 if index == 0 else rng.randint(250, 1000)
+            output.write(f"signal={signal},delay_ms={delay_ms}\n")
 
 
-def parse_base_config():
+def parse_base_config(model="2"):
+    model = normalize_model(model)
     # Pega o caminho do arquivo
-    path = base_config_path()
+    path = base_config_path(model)
     # Caso não exista, cria o arquivo
     if not os.path.exists(path):
-        create_base_config(path)
+        create_base_config(path, model)
 
     config = {
+        "model": model,
         "seed": 0,
         "matrix": "",
         "image_width": 30,
@@ -182,13 +219,14 @@ def post_json(host, port, path, payload):
         return response.read().decode("utf-8")
 
 
-def run_client(host, port):
+def run_client(host, port, model="2"):
     # Pega as configurações do arquivo base_config.txt. Nela está a seed que também será usada no projeto C++
-    config = parse_base_config()
+    config = parse_base_config(model)
     h_path = find_from_parents(config["matrix"])
     h = read_matrix_csv(h_path)
 
     # Printa insformações no terminal/console
+    print(f"Modelo: {config['model']}")
     print(f"Arquivo base: {config['path']}")
     print(f"Seed: {config['seed']}")
     print(f"Matriz H: {h_path}")
