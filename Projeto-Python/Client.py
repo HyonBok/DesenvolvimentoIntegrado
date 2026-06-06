@@ -12,6 +12,7 @@ DEFAULT_SIGNALS = [
 ]
 
 
+# Função auxiliar, para encontrar os caminhos dos arquivos
 def find_from_parents(relative):
     base = os.getcwd()
     while True:
@@ -27,10 +28,12 @@ def find_from_parents(relative):
     raise FileNotFoundError(f"arquivo nao encontrado: {relative}")
 
 
+# Caminho da pasta Dados
 def base_config_path():
     return os.path.join(find_from_parents("Dados"), "base_config.txt")
 
 
+# Cria o arquivo base_config.txt com configurações padrão caso não exista
 def create_base_config(path):
     seed = time.time_ns()
     rng = random.Random(seed)
@@ -93,10 +96,12 @@ def parse_base_config():
     return config
 
 
+# Formata sinal lido do arquivo base_config.txt
 def parse_signal(value):
     path = value
     delay_ms = 0
 
+    # Primeiro tem o caminho do sinal, depois pode ter uma configuração extra (delay_ms) separada por vírgula
     if "," in value:
         path, extra = value.split(",", 1)
         extra = extra.strip()
@@ -106,10 +111,12 @@ def parse_signal(value):
     return {"path": path.strip(), "delay_ms": delay_ms}
 
 
+# Formata numeros vindos do csv
 def parse_csv_numbers(line):
     return [float(cell) for cell in line.replace(";", ",").split(",") if cell.strip()]
 
 
+# Leitura vetor csv(linha)
 def read_vector_csv(path):
     values = []
     with open(path, "r", encoding="utf-8-sig") as input_file:
@@ -118,10 +125,12 @@ def read_vector_csv(path):
     return values
 
 
+# Leitura da matriz csv
 def read_matrix_csv(path):
     matrix = []
     columns = 0
 
+    # Leitura do arquivo
     with open(path, "r", encoding="utf-8-sig") as input_file:
         for line in input_file:
             row = parse_csv_numbers(line)
@@ -138,6 +147,7 @@ def read_matrix_csv(path):
     return matrix
 
 
+# Formato da resposta em JSON
 def build_payload(config, h, g, signal_path):
     return {
         "g": g,
@@ -158,6 +168,7 @@ def build_payload(config, h, g, signal_path):
     }
 
 
+# Método post para enviar ao servidor
 def post_json(host, port, path, payload):
     body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
     request = urllib.request.Request(
@@ -177,6 +188,7 @@ def run_client(host, port):
     h_path = find_from_parents(config["matrix"])
     h = read_matrix_csv(h_path)
 
+    # Printa insformações no terminal/console
     print(f"Arquivo base: {config['path']}")
     print(f"Seed: {config['seed']}")
     print(f"Matriz H: {h_path}")

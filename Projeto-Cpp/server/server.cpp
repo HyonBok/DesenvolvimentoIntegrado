@@ -5,9 +5,7 @@
 #include <chrono>
 #include <cctype>
 #include <cmath>
-#include <cstdlib>
 #include <cstdint>
-#include <cstdio>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -593,149 +591,9 @@ void validatePayload(const RequestPayload& req) {
     }
 }
 
-std::filesystem::path findFromParents(const std::filesystem::path& relative) {
-    std::filesystem::path base = std::filesystem::current_path();
-    while (true) {
-        const std::filesystem::path candidate = base / relative;
-        if (std::filesystem::exists(candidate)) {
-            return candidate;
-        }
-        if (!base.has_parent_path() || base == base.parent_path()) {
-            break;
-        }
-        base = base.parent_path();
-    }
-    throw std::runtime_error("arquivo nao encontrado: " + relative.string());
-}
-
-std::string quoteArg(const std::filesystem::path& path) {
-    std::string text = std::filesystem::absolute(path).string();
-    std::string quoted = "\"";
-    for (const char ch : text) {
-        if (ch == '"') {
-            quoted += "\\\"";
-        } else {
-            quoted += ch;
-        }
-    }
-    quoted += '"';
-    return quoted;
-}
-
-std::string quoteTextArg(const std::string& text) {
-    std::string quoted = "\"";
-    for (const char ch : text) {
-        if (ch == '"') {
-            quoted += "\\\"";
-        } else {
-            quoted += ch;
-        }
-    }
-    quoted += '"';
-    return quoted;
-}
-
-std::string readTextFile(const std::filesystem::path& path) {
-    std::ifstream in(path);
-    if (!in) {
-        throw std::runtime_error("nao foi possivel ler arquivo: " + path.string());
-    }
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    return buffer.str();
-}
-
-std::vector<std::string> pythonInterpreters() {
-    std::vector<std::string> interpreters;
-    if (const char* envPython = std::getenv("PYTHON")) {
-        if (*envPython != '\0') {
-            interpreters.push_back(quoteTextArg(envPython));
-        }
-    }
-    interpreters.push_back("python");
-#ifdef _WIN32
-    interpreters.push_back("py -3");
-#else
-    interpreters.push_back("python3");
-#endif
-    return interpreters;
-}
-
-std::string runPython(const std::string& body, const std::string& outDir, const std::string& csvPath) {
-    try {
-        const std::filesystem::path script = findFromParents("Projeto-Python/Projeto.py");
-        const auto stamp = std::chrono::high_resolution_clock::now().time_since_epoch();
-        const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stamp).count();
-        const std::filesystem::path requestPath = std::filesystem::path(outDir) / ("request_" + std::to_string(ns) + ".json");
-        const std::filesystem::path resultPath = std::filesystem::path(outDir) / ("python_result_" + std::to_string(ns) + ".json");
-
-        {
-            std::ofstream request(requestPath);
-            request << body;
-        }
-
-        const std::string arguments = " " + quoteArg(script)
-            + " --input " + quoteArg(requestPath)
-            + " --output-dir " + quoteArg(outDir)
-            + " --append-csv " + quoteArg(csvPath)
-            + " > " + quoteArg(resultPath);
-
-        int status = 1;
-        for (const std::string& interpreter : pythonInterpreters()) {
-            const std::string command = interpreter + arguments;
-            status = std::system(command.c_str());
-            if (status == 0) {
-                break;
-            }
-            std::cerr << "python command failed: " << interpreter << " status " << status << '\n';
-        }
-        if (status != 0) {
-            std::cerr << "python reconstruction failed; install Python/NumPy or set PYTHON\n";
-            std::filesystem::remove(requestPath);
-            std::filesystem::remove(resultPath);
-            return {};
-        }
-
-        std::string result = readTextFile(resultPath);
-        std::filesystem::remove(requestPath);
-        std::filesystem::remove(resultPath);
-        return result;
-    } catch (const std::exception& err) {
-        std::cerr << "python reconstruction unavailable: " << err.what() << '\n';
-        return {};
-    }
-}
-
-std::string trimJsonArray(std::string text) {
-    text.erase(text.begin(), std::find_if(text.begin(), text.end(), [](unsigned char ch) {
-                   return !std::isspace(ch);
-               }));
-    text.erase(std::find_if(text.rbegin(), text.rend(), [](unsigned char ch) {
-                   return !std::isspace(ch);
-               }).base(),
-               text.end());
-    if (text.size() >= 2 && text.front() == '[' && text.back() == ']') {
-        return text.substr(1, text.size() - 2);
-    }
-    return {};
-}
-
-std::string mergeJsonArrays(const std::string& first, const std::string& second) {
-    const std::string firstItems = trimJsonArray(first);
-    const std::string secondItems = trimJsonArray(second);
-    if (firstItems.empty()) {
-        return secondItems.empty() ? "[]" : "[" + secondItems + "]";
-    }
-    if (secondItems.empty()) {
-        return "[" + firstItems + "]";
-    }
-    return "[" + firstItems + "," + secondItems + "]";
-}
-
 void appendComparisonReport(const std::string& path,
                             const RequestPayload& req,
-                            const std::vector<ReconMeta>& cppResults,
-                            const std::string& pythonJson) {
+                            const std::vector<ReconMeta>& cppResults) {
     std::ofstream out(path, std::ios::app);
     if (!out) {
         return;
@@ -753,7 +611,7 @@ void appendComparisonReport(const std::string& path,
             << " | residuo=" << std::setprecision(12) << meta.finalResNorm
             << " | imagem=" << meta.imagePath << '\n';
     }
-    out << "Resultados Python: " << (pythonJson.empty() ? "nao executado" : pythonJson) << "\n\n";
+    out << '\n';
 }
 
 // Fluxo principal do endpoint: parseia o corpo, roda CGNE e CGNR, grava o CSV
@@ -770,9 +628,8 @@ std::string reconstruct(const std::string& body) {
     appendCsv(csvPath, results);
 
     const std::string cppJson = metasToJson(results);
-    const std::string pythonJson = runPython(body, outDir, csvPath);
-    appendComparisonReport(outDir + "/report_comparison.txt", req, results, pythonJson);
-    return mergeJsonArrays(cppJson, pythonJson);
+    appendComparisonReport(outDir + "/report_comparison.txt", req, results);
+    return cppJson;
 }
 
 std::string lower(std::string text) {

@@ -20,8 +20,7 @@ Se `Dados/base_config.txt` nao existir, o cliente C++ ou o cliente Python cria a
 |-- Projeto-Python/
 |   |-- Main.py
 |   |-- Server.py
-|   |-- Client.py
-|   `-- Projeto.py
+|   `-- Client.py
 `-- Projeto-Cpp/
     |-- client/
     |   |-- client.cpp
@@ -71,13 +70,7 @@ pip install numpy
 
 ## Executar Python
 
-O arquivo principal do Python agora e `Main.py`. O arquivo `Projeto.py` apenas chama `Main.py` para manter compatibilidade.
-
-Processar um JSON diretamente:
-
-```bash
-python Projeto-Python/Main.py --input payload.json --output-dir output_python
-```
+O arquivo principal do Python e `Main.py`.
 
 Servidor Python:
 
@@ -137,7 +130,7 @@ cd Projeto-Cpp\client
 .\recon_client.exe
 ```
 
-O servidor C++ executa CGNE e CGNR em C++. Ele tambem tenta chamar o Python por subprocesso para gerar os resultados Python no mesmo relatorio. Se `python` nao estiver no `PATH`, defina a variavel `PYTHON` apontando para o interpretador com NumPy.
+O servidor C++ executa CGNE e CGNR em C++. Para comparar com Python, rode tambem o fluxo servidor/cliente Python, que usa o mesmo `Dados/base_config.txt`.
 
 ## Entrada HTTP
 

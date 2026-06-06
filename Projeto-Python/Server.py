@@ -1,5 +1,6 @@
 import binascii
 import csv
+import ctypes
 import json
 import math
 import os
@@ -14,6 +15,7 @@ import numpy as np
 
 
 def norm_sq(values):
+    # Multiplicação matricial
     return float(values @ values)
 
 
@@ -21,14 +23,16 @@ def cgnr(h, g, tol=1e-4, max_iter=10):
     _, cols = h.shape
     f = np.zeros(cols)
     r = g.copy()
+    # Multiplicação matricial
     z = h.T @ r
     p = z.copy()
-    prev_norm = norm_sq(r)
-    final_norm = math.sqrt(prev_norm)
+    prev_norm = math.sqrt(norm_sq(r))
+    final_norm = prev_norm
     iterations = 0
 
     for i in range(max_iter):
         iterations = i + 1
+        # Multiplicação matricial
         w = h @ p
         numer = norm_sq(z)
         denom = norm_sq(w)
@@ -39,13 +43,14 @@ def cgnr(h, g, tol=1e-4, max_iter=10):
         f += alpha * p
         r -= alpha * w
 
+        # Multiplicação matricial
         z_next = h.T @ r
         beta = 0.0 if numer == 0.0 else norm_sq(z_next) / numer
         p = z_next + beta * p
         z = z_next
 
-        curr_norm = norm_sq(r)
-        final_norm = math.sqrt(curr_norm)
+        curr_norm = math.sqrt(norm_sq(r))
+        final_norm = curr_norm
         if abs(curr_norm - prev_norm) < tol:
             break
         prev_norm = curr_norm
@@ -57,9 +62,10 @@ def cgne(h, g, tol=1e-4, max_iter=10):
     _, cols = h.shape
     f = np.zeros(cols)
     r = g.copy()
+    # Multiplicação matricial
     p = h.T @ r
-    prev_norm = norm_sq(r)
-    final_norm = math.sqrt(prev_norm)
+    prev_norm = math.sqrt(norm_sq(r))
+    final_norm = prev_norm
     iterations = 0
 
     for i in range(max_iter):
@@ -71,14 +77,16 @@ def cgne(h, g, tol=1e-4, max_iter=10):
 
         alpha = rtr / ptp
         f += alpha * p
+        # Multiplicação matricial
         r -= alpha * (h @ p)
 
         rtr_next = norm_sq(r)
         beta = 0.0 if rtr == 0.0 else rtr_next / rtr
+        # Multiplicação matricial
         p = (h.T @ r) + beta * p
 
-        curr_norm = norm_sq(r)
-        final_norm = math.sqrt(curr_norm)
+        curr_norm = math.sqrt(norm_sq(r))
+        final_norm = curr_norm
         if abs(curr_norm - prev_norm) < tol:
             break
         prev_norm = curr_norm
@@ -91,6 +99,37 @@ def iso_now():
 
 
 def memory_mb():
+    if sys.platform.startswith("win"):
+        class ProcessMemoryCounters(ctypes.Structure):
+            _fields_ = [
+                ("cb", ctypes.c_ulong),
+                ("PageFaultCount", ctypes.c_ulong),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        counters = ProcessMemoryCounters()
+        counters.cb = ctypes.sizeof(counters)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        psapi.GetProcessMemoryInfo.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ProcessMemoryCounters),
+            ctypes.c_ulong,
+        ]
+        psapi.GetProcessMemoryInfo.restype = ctypes.c_int
+
+        process = kernel32.GetCurrentProcess()
+        ok = psapi.GetProcessMemoryInfo(process, ctypes.byref(counters), counters.cb)
+        return counters.WorkingSetSize / 1024.0 / 1024.0 if ok else 0.0
+
     try:
         import resource
 
@@ -142,15 +181,14 @@ def append_csv(path, metas):
         if not exists:
             writer.writerow([
                 "timestamp", "algorithm", "method", "elapsed_ms", "cpu_seconds",
-                "memory_mb", "image_width", "image_height", "iterations",
+                "memory_usage_mb", "image_width", "image_height", "iterations",
                 "final_res_norm", "image_path", "seed",
             ])
         for meta in metas:
             writer.writerow([
                 time.time_ns(), meta["algorithm"], meta["method"], meta["elapsed_ms"],
-                meta["cpu_seconds"], meta["memory_mb"], meta["image_width"],
-                meta["image_height"], meta["iterations"], meta["final_res_norm"],
-                meta["image_path"], meta["seed"],
+                meta["cpu_seconds"], meta["memory_usage_mb"], meta["image_width"], meta["image_height"],
+                meta["iterations"], meta["final_res_norm"], meta["image_path"], meta["seed"],
             ])
 
 
@@ -162,10 +200,21 @@ def append_text_report(path, metas):
             output.write(
                 f"- {meta['method']} | tempo_ms={meta['elapsed_ms']} "
                 f"| cpu_s={meta['cpu_seconds']:.6f} "
-                f"| memoria_mb={meta['memory_mb']:.6f} "
+                f"| memoria_mb={meta['memory_usage_mb']:.6f} "
                 f"| iteracoes={meta['iterations']} "
                 f"| residuo={meta['final_res_norm']:.12g} "
                 f"| imagem={meta['image_path']}\n"
+            )
+        if len(metas) >= 2:
+            first, second = metas[0], metas[1]
+            output.write("Comparacao simples\n")
+            output.write(
+                f"- {first['method']} vs {second['method']} | "
+                f"tempo_ms={abs(first['elapsed_ms'] - second['elapsed_ms'])} "
+                f"| cpu_s={abs(first['cpu_seconds'] - second['cpu_seconds']):.6f} "
+                f"| memoria_mb={abs(first['memory_usage_mb'] - second['memory_usage_mb']):.6f} "
+                f"| iteracoes={abs(first['iterations'] - second['iterations'])} "
+                f"| residuo={abs(first['final_res_norm'] - second['final_res_norm']):.12g}\n"
             )
         output.write("\n")
 
@@ -173,6 +222,7 @@ def append_text_report(path, metas):
 def run_method(method, h, g, params, output_dir, width, height, seed):
     start_ms = time.time_ns() // 1_000_000
     start_cpu = time.process_time()
+    memory_before = memory_mb()
 
     if method == "CGNE":
         f, iterations, residual = cgne(h, g, params["tol"], params["max_iter"])
@@ -181,6 +231,8 @@ def run_method(method, h, g, params, output_dir, width, height, seed):
 
     image_path = os.path.join(output_dir, f"img_python_{method}_{time.time_ns()}.png")
     save_image(f, image_path, width, height)
+    memory_after = memory_mb()
+    end_ms = time.time_ns() // 1_000_000
 
     meta = {
         "algorithm": "python",
@@ -188,10 +240,10 @@ def run_method(method, h, g, params, output_dir, width, height, seed):
         "start_iso": iso_now(),
         "end_iso": iso_now(),
         "start_ms": start_ms,
-        "end_ms": time.time_ns() // 1_000_000,
-        "elapsed_ms": time.time_ns() // 1_000_000 - start_ms,
+        "end_ms": end_ms,
+        "elapsed_ms": end_ms - start_ms,
         "cpu_seconds": time.process_time() - start_cpu,
-        "memory_mb": memory_mb(),
+        "memory_usage_mb": max(0.0, memory_after - memory_before),
         "image_width": width,
         "image_height": height,
         "size_pixels": width * height,
@@ -208,7 +260,9 @@ def run_method(method, h, g, params, output_dir, width, height, seed):
     return meta
 
 
+# Processamento dados do cliente
 def reconstruct_payload(payload, output_dir, csv_path=None):
+    # Dados
     g = np.asarray(payload["g"], dtype=float)
     h = np.asarray(payload["H"], dtype=float)
 
@@ -241,16 +295,14 @@ def reconstruct_payload(payload, output_dir, csv_path=None):
     return metas
 
 
-def reconstruct_file(input_path, output_dir, csv_path=None):
-    with open(input_path, "r", encoding="utf-8-sig") as input_file:
-        payload = json.load(input_file)
-    return reconstruct_payload(payload, output_dir, csv_path)
-
+# Handler do servidor HTTP Python
 class Handler(BaseHTTPRequestHandler):
     output_dir = None
     csv_path = None
 
+    # Único método POST, para receber os dados do cliente e processar a reconstrução da imagem
     def do_POST(self):
+        # Verificação simples, apenas para validar requisição
         if self.path != "/reconstruct":
             self.send_response(404)
             self.end_headers()
@@ -276,13 +328,19 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(message)
 
+
+# Inicia o servidor HTTP Python
 def run_server(host, port, output_dir):
+    # Caminho relatório CSV
     csv_path = os.path.join(output_dir, "report_comparison_python.csv")
 
+    # Inicia Handler
     Handler.output_dir = output_dir
     Handler.csv_path = csv_path
 
+    # Cria diretorio, caso não exista
     os.makedirs(output_dir, exist_ok=True)
+    # Instancia do servidor
     server = HTTPServer((host, port), Handler)
-    print(f"Python server listening on {host}:{port}")
+    print(f"Servidor ligado na porta {host}:{port}")
     server.serve_forever()
