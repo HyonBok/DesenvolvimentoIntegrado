@@ -43,7 +43,7 @@ Testing/
 # Project generated outputs
 Projeto-Cpp/**/output/
 Projeto-Cpp/output/
-output/
+output*/
 
 # Local scratch files
 .codex-*/

@@ -30,11 +30,6 @@ DEFAULT_MODELS = {
     },
 }
 
-MODEL_ALIASES = {
-    "1": "1",
-    "2": "2",
-}
-
 
 # Função auxiliar, para encontrar os caminhos dos arquivos
 def find_from_parents(relative):
@@ -54,9 +49,9 @@ def find_from_parents(relative):
 
 def normalize_model(model):
     value = str(model).strip().lower().replace("_", "-").replace(" ", "")
-    if value not in MODEL_ALIASES:
+    if value not in ["1", "2"]:
         raise ValueError("modelo invalido. Use 1 ou 2.")
-    return MODEL_ALIASES[value]
+    return value
 
 
 # Caminho do arquivo base_config.txt do modelo escolhido

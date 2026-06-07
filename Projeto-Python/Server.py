@@ -178,6 +178,7 @@ def save_image(values, path, width, height):
         output.write(png)
 
 
+# Método auxiliar para CSV
 def append_csv(path, metas):
     exists = os.path.exists(path)
     with open(path, "a", newline="", encoding="utf-8") as output:
@@ -196,6 +197,7 @@ def append_csv(path, metas):
             ])
 
 
+# Relatório
 def append_text_report(path, metas):
     with open(path, "a", encoding="utf-8") as output:
         output.write(f"Seed: {metas[0]['seed']}\n")
@@ -223,7 +225,9 @@ def append_text_report(path, metas):
         output.write("\n")
 
 
+# Processamento de reconstrução da imagem
 def run_method(method, h, g, params, output_dir, width, height, seed):
+    # Variáveis auxiliares para comparação depois
     start_ms = time.time_ns() // 1_000_000
     start_cpu = time.process_time()
     memory_before = memory_mb()
@@ -233,11 +237,13 @@ def run_method(method, h, g, params, output_dir, width, height, seed):
     else:
         f, iterations, residual = cgnr(h, g, params["tol"], params["max_iter"])
 
+    # Gerar imagem
     image_path = os.path.join(output_dir, f"img_python_{method}_{time.time_ns()}.png")
     save_image(f, image_path, width, height)
     memory_after = memory_mb()
     end_ms = time.time_ns() // 1_000_000
 
+    # Metadados para comparação e relatório
     meta = {
         "algorithm": "python",
         "method": method,
@@ -257,6 +263,7 @@ def run_method(method, h, g, params, output_dir, width, height, seed):
         "seed": seed,
     }
 
+    # Atualiza o arquivo JSON com os metadados da execução
     with open(image_path + ".json", "w", encoding="utf-8") as output:
         json.dump(meta, output, ensure_ascii=True)
         output.write("\n")
@@ -286,12 +293,14 @@ def reconstruct_payload(payload, output_dir, csv_path=None):
     height = int(payload.get("image_height", width))
     seed = int(payload.get("seed", 0))
 
+    # Cria diretorio de saída, caso não exista
     os.makedirs(output_dir, exist_ok=True)
     metas = [
         run_method("CGNE", h, g, params, output_dir, width, height, seed),
         run_method("CGNR", h, g, params, output_dir, width, height, seed),
     ]
 
+    # Relatório de comparação em CSV e TXT
     if csv_path:
         append_csv(csv_path, metas)
     append_text_report(os.path.join(output_dir, "report_comparison.txt"), metas)

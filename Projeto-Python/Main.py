@@ -19,7 +19,7 @@ def main():
     elif args.client:
         run_client(args.host, args.port, args.model)
     else:
-        print("Use --server ou --client. Use --model para escolher o modelo.")
+        print("Use --server ou --client. Para client, use --model para escolher o modelo.")
 
 
 if __name__ == "__main__":
