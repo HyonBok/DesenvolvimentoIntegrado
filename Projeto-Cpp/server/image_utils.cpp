@@ -116,12 +116,10 @@ bool saveImageFromMatrix(const ImageMatrix& matrix, const std::string& path) {
         }
     }
 
-    auto minMax = std::minmax_element(matrix[0].begin(), matrix[0].end());
-    double minValue = *minMax.first;
-    double maxValue = *minMax.second;
+    double minValue = 0.0;
+    double maxValue = 0.0;
     for (const auto& row : matrix) {
         const auto rowMinMax = std::minmax_element(row.begin(), row.end());
-        minValue = std::min(minValue, *rowMinMax.first);
         maxValue = std::max(maxValue, *rowMinMax.second);
     }
     if (minValue == maxValue) {
@@ -151,24 +149,4 @@ bool saveImageFromMatrix(const ImageMatrix& matrix, const std::string& path) {
     }
     out.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
     return static_cast<bool>(out);
-}
-
-bool saveImageFromVector(const std::vector<double>& values, const std::string& path, int sizePixels) {
-    if (values.empty() || sizePixels <= 0) {
-        return false;
-    }
-
-    int width = static_cast<int>(std::sqrt(static_cast<double>(sizePixels)));
-    int height = width;
-    if (width * width != sizePixels) {
-        width = sizePixels;
-        height = 1;
-    }
-
-    ImageMatrix matrix(static_cast<std::size_t>(height), std::vector<double>(static_cast<std::size_t>(width), 0.0));
-    const std::size_t count = std::min<std::size_t>(static_cast<std::size_t>(width * height), values.size());
-    for (std::size_t i = 0; i < count; ++i) {
-        matrix[i / static_cast<std::size_t>(width)][i % static_cast<std::size_t>(width)] = values[i];
-    }
-    return saveImageFromMatrix(matrix, path);
 }

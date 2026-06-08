@@ -467,7 +467,7 @@ void saveJson(const std::string& path, const ReconMeta& meta) {
     out << metaToJson(meta) << '\n';
 }
 
-ImageMatrix toImageMatrix(const Vector& values, int width, int height) {
+ImageMatrix toRenderedImageMatrix(const Vector& values, int width, int height) {
     if (width <= 0 || height <= 0) {
         const int side = static_cast<int>(std::sqrt(static_cast<double>(values.size())));
         if (side * side == static_cast<int>(values.size())) {
@@ -484,7 +484,15 @@ ImageMatrix toImageMatrix(const Vector& values, int width, int height) {
     for (std::size_t i = 0; i < count; ++i) {
         matrix[i / static_cast<std::size_t>(width)][i % static_cast<std::size_t>(width)] = values[i];
     }
-    return matrix;
+
+    ImageMatrix rendered(static_cast<std::size_t>(width), Vector(static_cast<std::size_t>(height), 0.0));
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            rendered[static_cast<std::size_t>(x)][static_cast<std::size_t>(y)] =
+                std::abs(matrix[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)]);
+        }
+    }
+    return rendered;
 }
 
 // Executa um dos metodos em C++, salva a imagem reconstruida e devolve os
@@ -506,7 +514,7 @@ ReconMeta runCpp(const RequestPayload& req, const std::string& method) {
     const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(stamp).count();
     const std::string imagePath = outDir + "/img_cpp_" + method + "_" + std::to_string(ns) + ".png";
 
-    if (!saveImageFromMatrix(toImageMatrix(result.f, req.imageWidth, req.imageHeight), imagePath)) {
+    if (!saveImageFromMatrix(toRenderedImageMatrix(result.f, req.imageWidth, req.imageHeight), imagePath)) {
         std::cerr << "erro salvar imagem C++: " << imagePath << '\n';
     }
 

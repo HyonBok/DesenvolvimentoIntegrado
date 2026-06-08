@@ -1,5 +1,7 @@
 #include <chrono>
+#include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -26,8 +28,6 @@ using socket_t = SOCKET;
 #include <unistd.h>
 using socket_t = int;
 #endif
-
-namespace {
 
 // Garante que a biblioteca de sockets seja inicializada no Windows e liberada
 // automaticamente ao fim do programa. Em Linux/macOS nao ha inicializacao extra.
@@ -64,7 +64,9 @@ struct SignalFile {
     int delayMs = 0;
 };
 
+// Arquivo de configuracao base
 struct BaseConfig {
+    std::string model = "2";
     std::int64_t seed = 0;
     std::string matrixRelative;
     int imageWidth = 30;
@@ -74,6 +76,55 @@ struct BaseConfig {
     std::vector<SignalFile> signals;
 };
 
+// Opcoes do cliente(modelo)
+struct ClientOptions {
+    std::string model = "2";
+};
+
+// Modelo
+struct ModelDefaults {
+    std::string folderName;
+    std::string matrixRelative;
+    int imageWidth = 30;
+    int imageHeight = 30;
+    std::vector<std::string> signals;
+};
+
+// Opcoes de modelo pre-definidas
+const ModelDefaults& defaultsForModel(const std::string& model) {
+    static const ModelDefaults model1 = {
+        "Dados Modelo 1",
+        "Dados/Dados Modelo 1/H-1.csv/H-1.csv",
+        60,
+        60,
+        {
+            "Dados/Dados Modelo 1/G-1.csv",
+            "Dados/Dados Modelo 1/G-2.csv",
+            "Dados/Dados Modelo 1/A-60x60-1.csv",
+        },
+    };
+    static const ModelDefaults model2 = {
+        "Dados Modelo 2",
+        "Dados/Dados Modelo 2/H-2.csv/H-2.csv",
+        30,
+        30,
+        {
+            "Dados/Dados Modelo 2/g-30x30-1.csv",
+            "Dados/Dados Modelo 2/g-30x30-2.csv",
+            "Dados/Dados Modelo 2/A-30x30-1.csv",
+        },
+    };
+
+    if (model == "1") {
+        return model1;
+    }
+    if (model == "2") {
+        return model2;
+    }
+    throw std::runtime_error("modelo invalido. Use 1 ou 2.");
+}
+
+// Conversor CSV que trata virgula e ponto e virgula
 std::vector<double> parseCsvNumbers(const std::string& line) {
     std::vector<double> values;
     std::string normalized = line;
@@ -94,8 +145,7 @@ std::vector<double> parseCsvNumbers(const std::string& line) {
     return values;
 }
 
-// Procura arquivos de dados partindo do diretorio atual e subindo ate a raiz
-// do projeto. Isso permite executar o binario pela pasta client, server ou build.
+// Procura arquivos de dados partindo do diretorio atual e subindo ate a raiz do projeto
 std::filesystem::path findFromParents(const std::filesystem::path& relative) {
     std::filesystem::path base = std::filesystem::current_path();
     while (true) {
@@ -111,6 +161,7 @@ std::filesystem::path findFromParents(const std::filesystem::path& relative) {
     throw std::runtime_error("arquivo nao encontrado: " + relative.string());
 }
 
+// Remove espacos em branco do inicio e fim de uma string
 std::string trim(const std::string& text) {
     const auto begin = text.find_first_not_of(" \t\r\n");
     if (begin == std::string::npos) {
@@ -120,11 +171,58 @@ std::string trim(const std::string& text) {
     return text.substr(begin, end - begin + 1);
 }
 
-std::filesystem::path baseConfigPath() {
-    return findFromParents("Dados") / "base_config.txt";
+// Formata 
+std::string normalizeToken(std::string value) {
+    value = trim(value);
+    std::string normalized;
+    for (char ch : value) {
+        if (ch == '_' || ch == ' ') {
+            ch = '-';
+        }
+        normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    return normalized;
 }
 
-void createBaseConfig(const std::filesystem::path& path) {
+// Garante modelo = 1 ou 2
+std::string normalizeModel(const std::string& model) {
+    const std::string value = normalizeToken(model);
+    if (value == "1" || value == "2") {
+        return value;
+    }
+    throw std::runtime_error("modelo invalido. Use 1 ou 2.");
+}
+
+// Argumentos para executar no cliente
+ClientOptions parseClientOptions(int argc, char* argv[]) {
+    ClientOptions options;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--model") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error("argumento sem valor: " + arg);
+            }
+            options.model = normalizeModel(argv[++i]);
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout << "Uso: recon_client [--model 1|2]\n";
+            std::exit(0);
+        } else {
+            throw std::runtime_error("argumento desconhecido: " + arg);
+        }
+    }
+    options.model = normalizeModel(options.model);
+    return options;
+}
+
+// Caminho base
+std::filesystem::path baseConfigPath(const std::string& model) {
+    const ModelDefaults& defaults = defaultsForModel(model);
+    return findFromParents(std::filesystem::path("Dados") / defaults.folderName) / "base_config.txt";
+}
+
+// Criar arquivo de configuracao base, caso nao exista
+void createBaseConfig(const std::filesystem::path& path, const std::string& model) {
+    const ModelDefaults& defaults = defaultsForModel(model);
     const auto now = std::chrono::high_resolution_clock::now().time_since_epoch();
     const auto seed = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
     std::mt19937_64 rng(static_cast<std::uint64_t>(seed));
@@ -136,15 +234,18 @@ void createBaseConfig(const std::filesystem::path& path) {
     }
 
     out << "seed=" << seed << '\n'
-        << "matrix=Dados/Dados Modelo 2/H-2.csv/H-2.csv\n"
-        << "image_width=30\n"
-        << "image_height=30\n"
+        << "matrix=" << defaults.matrixRelative << '\n'
+        << "image_width=" << defaults.imageWidth << '\n'
+        << "image_height=" << defaults.imageHeight << '\n'
         << "max_iter=10\n"
-        << "tol=0.0001\n"
-        << "signal=Dados/Dados Modelo 2/g-30x30-1.csv,delay_ms=0\n"
-        << "signal=Dados/Dados Modelo 2/g-30x30-2.csv,delay_ms=" << delayMs(rng) << '\n';
+        << "tol=0.0001\n";
+    for (std::size_t i = 0; i < defaults.signals.size(); ++i) {
+        const int delay = i == 0 ? 0 : delayMs(rng);
+        out << "signal=" << defaults.signals[i] << ",delay_ms=" << delay << '\n';
+    }
 }
 
+// Analisa linha do arquivo de configuracao onde estiver o sinal
 SignalFile parseSignalLine(const std::string& value) {
     SignalFile signal;
     const std::size_t comma = value.find(',');
@@ -161,10 +262,12 @@ SignalFile parseSignalLine(const std::string& value) {
     return signal;
 }
 
-BaseConfig loadBaseConfig() {
-    const std::filesystem::path path = baseConfigPath();
+// Carregar arquivo base
+BaseConfig loadBaseConfig(const std::string& model) {
+    const std::string normalizedModel = normalizeModel(model);
+    const std::filesystem::path path = baseConfigPath(normalizedModel);
     if (!std::filesystem::exists(path)) {
-        createBaseConfig(path);
+        createBaseConfig(path, normalizedModel);
     }
 
     std::ifstream in(path);
@@ -173,6 +276,7 @@ BaseConfig loadBaseConfig() {
     }
 
     BaseConfig config;
+    config.model = normalizedModel;
     std::string line;
     while (std::getline(in, line)) {
         line = trim(line);
@@ -208,6 +312,7 @@ BaseConfig loadBaseConfig() {
     return config;
 }
 
+// Metodo auxiliar para leitura de arquivo CSV(vetor)
 Vector readVectorCsv(const std::filesystem::path& path) {
     std::ifstream in(path);
     if (!in) {
@@ -223,6 +328,7 @@ Vector readVectorCsv(const std::filesystem::path& path) {
     return values;
 }
 
+// Metodo auxiliar para leitura de arquivo CSV(matriz)
 Matrix readMatrixCsv(const std::filesystem::path& path) {
     std::ifstream in(path);
     if (!in) {
@@ -247,6 +353,7 @@ Matrix readMatrixCsv(const std::filesystem::path& path) {
     return matrix;
 }
 
+// Validar dimensoes
 void validateDimensions(const Vector& g, const Matrix& h, const std::filesystem::path& gPath) {
     if (h.empty() || h[0].empty()) {
         throw std::runtime_error("matriz H vazia");
@@ -259,10 +366,12 @@ void validateDimensions(const Vector& g, const Matrix& h, const std::filesystem:
     }
 }
 
+// Formata numero com precisao
 void appendNumber(std::ostringstream& out, double value) {
     out << std::setprecision(17) << value;
 }
 
+// Evita caracteres especiais em JSON
 std::string jsonEscape(const std::string& text) {
     std::ostringstream out;
     for (const char ch : text) {
@@ -333,8 +442,8 @@ std::string buildPayloadJson(const Vector& g,
     return out.str();
 }
 
-// Envia todos os bytes da requisicao, pois send() pode transmitir apenas parte
-// do buffer em uma chamada.
+// Envia todos os bytes da requisicao, pois send() pode transmitir apenas parte do buffer em uma chamada
+// Ou seja -- loop ate que todo o conteudo seja enviado
 bool sendAll(socket_t sock, const std::string& data) {
     std::size_t total = 0;
     while (total < data.size()) {
@@ -347,25 +456,29 @@ bool sendAll(socket_t sock, const std::string& data) {
     return true;
 }
 
-// Abre uma conexao TCP, envia uma requisicao HTTP POST com JSON e retorna
-// apenas o corpo da resposta.
+// Abre uma conexao TCP, envia uma requisicao HTTP POST com JSON e retorna corpo
 std::string postJson(const std::string& host, int port, const std::string& path, const std::string& body) {
+    // Utilizando biblioteca ws2tcpip.h, cria socket e conecta ao servidor
     addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
+    // Resolve o host e porta para obter informacoes de conexao
     addrinfo* result = nullptr;
     const std::string portText = std::to_string(port);
     if (getaddrinfo(host.c_str(), portText.c_str(), &hints, &result) != 0) {
         throw std::runtime_error("nao foi possivel resolver o host");
     }
 
+    // Tenta as opcoes de endereco
     socket_t sock = -1;
     for (addrinfo* ptr = result; ptr != nullptr; ptr = ptr->ai_next) {
         sock = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
+        // Verifica se o socket foi criado com sucesso
         if (sock == static_cast<socket_t>(-1)) {
             continue;
         }
+        // Tenta conectar
         if (connect(sock, ptr->ai_addr, static_cast<int>(ptr->ai_addrlen)) == 0) {
             break;
         }
@@ -409,19 +522,19 @@ std::string postJson(const std::string& host, int port, const std::string& path,
     return response.substr(headerEnd + 4);
 }
 
-} // namespace
-
-int main() {
+int main(int argc, char* argv[]) {
     try {
         SocketRuntime sockets;
+        const ClientOptions options = parseClientOptions(argc, argv);
 
-        const BaseConfig config = loadBaseConfig();
+        BaseConfig config = loadBaseConfig(options.model);
         const auto hPath = findFromParents(config.matrixRelative);
 
         std::cout << "Carregando H de " << hPath.string() << '\n';
         const Matrix h = readMatrixCsv(hPath);
 
-        std::cout << "Usando arquivo base " << baseConfigPath().string() << '\n';
+        std::cout << "Modelo: " << config.model << '\n';
+        std::cout << "Usando arquivo base " << baseConfigPath(config.model).string() << '\n';
         std::cout << "Seed compartilhada: " << config.seed << '\n';
 
         for (std::size_t i = 0; i < config.signals.size(); ++i) {
